@@ -124,6 +124,7 @@ service_config=$(cat <<EOF
 Description=${virtual_surround_sink_description:?}
 Requires=pipewire.service
 After=pipewire.service
+PartOf=pipewire.service wireplumber.service
 
 [Service]
 Type=simple
