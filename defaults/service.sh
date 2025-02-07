@@ -95,7 +95,7 @@ args='{
         "filter.smart": true,
         "filter.smart.disabled": true,
         "filter.smart.target": { "node.name": "'${virtual_sink_name:?}'" },
-        "filter.smart.before": [ "'${virtual_sink_name:?}'" "filter-chain-sink" ],
+        "filter.smart.after": [ "'${virtual_sink_name:?}'" "filter-chain-sink" ],
         "filter.smart.name": "'${virtual_surround_sink_name:?}'"
     },
     playback.props = {

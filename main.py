@@ -197,16 +197,14 @@ class Plugin:
             # If the app is in the enabled_apps list,
             # it should be assigned to the Virtual Surround Sound sink.
             if app_name in enabled_apps:
-                decky.logger.info(current_sink_index, virtual_surround_sink['index'])
-                if current_sink_index != virtual_surround_sink['index']:
+                if current_sink_index and current_sink_index != virtual_surround_sink['index']:
                     decky.logger.info("Moving %s (sink input %s) to Virtual Surround Sound (sink %s)",
                                       app_name, sink_input['index'], virtual_surround_sink['index'])
                     await self.set_sink_for_application(sink_input['index'], virtual_surround_sink['index'])
             else:
                 # If the app is not enabled but is currently assigned to the Virtual Surround Sound sink,
                 # move it to the Virtual Sink.
-                decky.logger.info(current_sink_index, virtual_surround_sink['index'])
-                if current_sink_index == virtual_surround_sink['index']:
+                if current_sink_index and current_sink_index == virtual_surround_sink['index']:
                     decky.logger.info("Moving %s (sink input %s) to Virtual Sink (sink %s)",
                                       app_name, sink_input['index'], virtual_sink['index'])
                     await self.set_sink_for_application(sink_input['index'], virtual_sink['index'])
