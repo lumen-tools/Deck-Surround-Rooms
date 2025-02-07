@@ -23,6 +23,7 @@ coverage
 node_modules
 bower_components
 .pnpm-store
+venv
 
 # Editors
 .idea
@@ -55,3 +56,8 @@ out/*
 cli/
 cli/*
 cli/decky
+
+# Dev env setup
+/service.sh
+/decky.py
+/source.sh

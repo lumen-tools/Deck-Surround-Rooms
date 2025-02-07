@@ -1,11 +1,21 @@
 {
-  "name": "Example Plugin",
-  "author": "John Doe",
-  "flags": ["debug", "_root"],
+  "name": "Virtual Surround Sound",
+  "author": "Josh.5",
+  "flags": [],
   "api_version": 1,
   "publish": {
-    "tags": ["template", "root"],
-    "description": "Decky example plugin.",
-    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
+    "tags": [
+      "audio",
+      "surround",
+      "5.1",
+      "7.1",
+      "headphones",
+      "binaural",
+      "dts",
+      "dolby",
+      "atmos"
+    ],
+    "description": "Create a virtual surround sound audio sink that converts 7.1 surround audio into immersive binaural output for headphones via HRIR processing with multiple presets (Atmos, DTS, Steam, Razer, etc.).",
+    "image": "https://raw.githubusercontent.com/DeckSettings/decky-game-settings/master/assets/screenshot_1.jpg"
   }
 }
