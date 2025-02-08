@@ -6,7 +6,7 @@ import {
     Dropdown, Navigation, Router,
 } from "@decky/ui";
 import {useState, useEffect} from "react";
-import {MdArrowBack, MdWeb} from "react-icons/md";
+import {MdArrowBack, MdSurroundSound, MdWeb} from "react-icons/md";
 import {SiDiscord, SiGithub, SiKofi, SiPatreon} from 'react-icons/si'
 import {HrirFile, PluginConfig} from "../interfaces";
 import {getPluginConfig, setPluginConfig} from "../constants";
@@ -59,6 +59,11 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
         }
     };
 
+    const runSoundTest = async () => {
+        console.info(`[PluginConfigView] Exec sound test`);
+        await call<[], HrirFile[]>('run_sound_test');
+    }
+
     useEffect(() => {
         console.log(`[PluginConfigView] Mounted`);
         updateHrirFileListList()
@@ -101,7 +106,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
                                 onChange={(option) => handleHrirSelection(option.data)}
                                 strDefaultLabel="Select HRIR Profile"
                             />
-                            <p style={{fontSize: '0.7rem', marginBottom: '10px'}}>
+                            <p style={{fontSize: '0.7rem', marginTop: '10px', marginBottom: '10px'}}>
                                 Choose from the list of Head-Related Impulse Response (HRIR) .wav files, which captures
                                 how sound is modified by the shape of your head and ears. This will be applied to your
                                 audio signal, to create a realistic binaural effect, simulating surround sound through
@@ -114,9 +119,19 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
                                 (Changing presets in this plugin will overwrite that file. To prevent this, set it to
                                 read-only to prevent changes.)
                             </p>
-
+                        </PanelSectionRow>
+                        <PanelSectionRow>
                             <DialogButton
-                                style={{width: '100%', minWidth: 0}}
+                                style={{margin: '5px'}}
+                                onClick={() => {
+                                    runSoundTest()
+                                }}>
+                                <MdSurroundSound/> Run Sound Test
+                            </DialogButton>
+                        </PanelSectionRow>
+                        <PanelSectionRow>
+                            <DialogButton
+                                style={{margin: '5px'}}
                                 onClick={() => {
                                     openWeb(`https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc`);
                                 }}>
@@ -124,6 +139,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
                             </DialogButton>
                         </PanelSectionRow>
                     </PanelSection>
+                    <hr/>
                     <PanelSection>
                         <PanelSocialButton icon={<SiPatreon fill="#438AB9"/>} url="https://www.patreon.com/c/Josh5">
                             Patreon

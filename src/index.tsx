@@ -5,8 +5,8 @@ import {
     definePlugin,
     // routerHook
 } from "@decky/api"
-import {RiSurroundSoundFill} from "react-icons/ri";
 import QuickAccessView from "./components/QuickAccessView";
+import { MdSurroundSound } from "react-icons/md";
 
 
 export default definePlugin(() => {
@@ -22,7 +22,7 @@ export default definePlugin(() => {
         // The content of your plugin's menu
         content: <QuickAccessView/>,
         // The icon displayed in the plugin list
-        icon: <RiSurroundSoundFill/>,
+        icon: <MdSurroundSound/>,
         // The function triggered when your plugin unloads
         onDismount() {
             console.log("Unloading")

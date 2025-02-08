@@ -220,9 +220,8 @@ kill_all_running_instances() {
 }
 
 run() {
-    # Default value for channels
+    echo "Running service"
     local channels="8"
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --channels=*)
@@ -294,9 +293,8 @@ run() {
 }
 
 speaker_test() {
-    # Default value for channels
+    echo "Running sound test"
     local pulse_sink="${virtual_surround_sink_name:?}"
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sink=*)
@@ -313,13 +311,11 @@ speaker_test() {
         esac
         shift
     done
-
     if [[ "$pulse_sink" != "${virtual_surround_sink_name:?}" && "$pulse_sink" != "${virtual_sink_name:?}" ]]; then
-         echo "Selecte sink: $pulse_sink. Must be ${virtual_surround_sink_name:?} or ${virtual_sink_name:?}."
+         echo "Select sink: $pulse_sink. Must be ${virtual_surround_sink_name:?} or ${virtual_sink_name:?}."
          exit 1
     fi
 
-    local aplay_device="pulse:input.${pulse_sink:?}"
     for i in {0..6}; do
         speaker-test -D "pulse:input.${pulse_sink:?}" -c 8 -t wave -s $((i+1))
     done

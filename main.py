@@ -28,29 +28,35 @@ def subprocess_exec_env():
     return env
 
 
+async def service_script_exec(command, args=None):
+    if args is None:
+        args = []
+    script_directory = os.path.dirname(os.path.abspath(__file__))
+    service_script = os.path.join(script_directory, "service.sh")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            service_script, command, *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=subprocess_exec_env()
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            decky.logger.error(f"Service script exec failed: {stderr.decode()}")
+        else:
+            decky.logger.info("Service script exec output:")
+            for line in stdout.decode().splitlines():
+                decky.logger.info(line)
+    except Exception as e:
+        decky.logger.error(f"Error executing service script: {e}")
+
+
 class Plugin:
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
         self.loop = asyncio.get_event_loop()
         decky.logger.info("Installing service")
-        # Install service
-        script_directory = os.path.dirname(os.path.abspath(__file__))
-        service_script = os.path.join(script_directory, "service.sh")
-        try:
-            process = await asyncio.create_subprocess_exec(
-                service_script, "install",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=subprocess_exec_env()
-            )
-            stdout, stderr = await process.communicate()
-            if process.returncode != 0:
-                decky.logger.error(f"Service installation failed: {stderr.decode()}")
-            decky.logger.info("Service installation output:")
-            for line in stdout.decode().splitlines():
-                decky.logger.info(line)
-        except Exception as e:
-            decky.logger.error(f"Error installing service: {e}")
+        await service_script_exec("install")
 
         # Monitor running apps to auto-assign the correct audio sink
         self.running = True
@@ -99,29 +105,7 @@ class Plugin:
     # plugin that may remain on the system
     async def _uninstall(self):
         decky.logger.info("Uninstalling service")
-        # Uninstall service
-        script_directory = os.path.dirname(os.path.abspath(__file__))
-        service_script = os.path.join(script_directory, "service.sh")
-        try:
-            process = await asyncio.create_subprocess_exec(
-                service_script, "uninstall",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=subprocess_exec_env()
-            )
-
-            stdout, stderr = await process.communicate()
-            if process.returncode != 0:
-                decky.logger.error(f"Service uninstallation failed: {stderr.decode()}")
-            else:
-                decky.logger.info("Service uninstallation output:")
-                for line in stdout.decode().splitlines():
-                    decky.logger.info(line)
-        except Exception as e:
-            decky.logger.error(f"Error uninstalling service: {e}")
-
-    async def start_timer(self):
-        self.loop.create_task(self.long_running())
+        await service_script_exec("uninstall")
 
     # Migrations that should be performed before entering `_main()`.
     async def _migration(self):
@@ -274,10 +258,15 @@ class Plugin:
             hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
             shutil.copy2(selected_hrir_path, hrir_dest_path)
             decky.logger.info("Copied %s to %s", selected_hrir_path, hrir_dest_path)
+            await service_script_exec("restart")
             return True
         except Exception as e:
             decky.logger.error("Error: Failed to copy HRIR WAV file: %s", e)
         return False
+
+    async def run_sound_test(self):
+        """Run a surround sound test using the Virtual Surround Sound sink"""
+        await service_script_exec("speaker-test")
 
     async def parse_properties(self, lines, start_index):
         """
