@@ -14,6 +14,10 @@ trap '_term' INT QUIT HUP TERM ERR
 module_name="libpipewire-module-filter-chain"
 virtual_surround_sink_name="virtual-surround-sound"
 virtual_surround_sink_description="Virtual Surround Sound"
+if [[ -n "${VIRTUAL_SURROUND_SINK_SUFFIX:-}" ]]; then
+    virtual_surround_sink_name="virtual-surround-sound-${VIRTUAL_SURROUND_SINK_SUFFIX:-}"
+    virtual_surround_sink_description="Virtual Surround Sound (${VIRTUAL_SURROUND_SINK_SUFFIX:-})"
+fi
 virtual_sink_name="virtual-sink"
 # 7.1
 args_8='{
