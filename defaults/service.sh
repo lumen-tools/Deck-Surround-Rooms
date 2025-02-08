@@ -293,6 +293,39 @@ run() {
     echo "DONE"
 }
 
+speaker_test() {
+    # Default value for channels
+    local pulse_sink="${virtual_surround_sink_name:?}"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --sink=*)
+                pulse_sink="${1#*=}"
+                ;;
+            --sink)
+                shift
+                pulse_sink="$1"
+                ;;
+            *)
+                echo "Invalid arg: $1"
+                print_usage_and_exit 1
+                ;;
+        esac
+        shift
+    done
+
+    if [[ "$pulse_sink" != "${virtual_surround_sink_name:?}" && "$pulse_sink" != "${virtual_sink_name:?}" ]]; then
+         echo "Selecte sink: $pulse_sink. Must be ${virtual_surround_sink_name:?} or ${virtual_sink_name:?}."
+         exit 1
+    fi
+
+    local aplay_device="pulse:input.${pulse_sink:?}"
+    for i in {0..6}; do
+        speaker-test -D "pulse:input.${pulse_sink:?}" -c 8 -t wave -s $((i+1))
+    done
+    speaker-test -D "pulse:input.${pulse_sink:?}" -c 8 -t sine -f 50 -s 8
+}
+
 install_service() {
     echo "Installing service: ${service_name:?}"
     echo "  - Installing systemd unit: ${service_file:?}"
@@ -364,6 +397,9 @@ shift
 case "$cmd" in
     "run")
         run "$@"
+        ;;
+    "speaker-test")
+        speaker_test "$@"
         ;;
     "install")
         install_service "$@"
