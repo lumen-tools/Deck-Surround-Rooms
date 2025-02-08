@@ -15,7 +15,8 @@ module_name="libpipewire-module-filter-chain"
 virtual_surround_sink_name="virtual-surround-sound"
 virtual_surround_sink_description="Virtual Surround Sound"
 virtual_sink_name="virtual-sink"
-args='{
+# 7.1
+args_8='{
     "audio.channels": 8,
     "audio.position": ["FL","FR","FC","LFE","RL","RR","SL","SR"],
     "node.name": "'${virtual_surround_sink_name:?}'",
@@ -105,6 +106,79 @@ args='{
         "stream.dont-remix": true
     }
 }'
+# 5.1
+args_6='{
+    "audio.channels": 6,
+    "audio.position": ["FL","FR","FC","LFE","SL","SR"],
+    "node.name": "'${virtual_surround_sink_name:?}'",
+    "node.description": "'${virtual_surround_sink_description:?}'",
+    filter.graph = {
+        "nodes": [
+            { "type": "builtin", "label": "convolver", "name": "convFL_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 0 } },
+            { "type": "builtin", "label": "convolver", "name": "convFL_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 1 } },
+            { "type": "builtin", "label": "convolver", "name": "convFR_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 1 } },
+            { "type": "builtin", "label": "convolver", "name": "convFR_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 0 } },
+            { "type": "builtin", "label": "convolver", "name": "convFC", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 2 } },
+            { "type": "builtin", "label": "convolver", "name": "convLFE", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 3 } },
+            { "type": "builtin", "label": "convolver", "name": "convSL_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 4 } },
+            { "type": "builtin", "label": "convolver", "name": "convSL_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 5 } },
+            { "type": "builtin", "label": "convolver", "name": "convSR_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 5 } },
+            { "type": "builtin", "label": "convolver", "name": "convSR_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 4 } },
+            { "type": "builtin", "label": "mixer", "name": "mixL" },
+            { "type": "builtin", "label": "mixer", "name": "mixR" },
+            { "type": "builtin", "label": "copy", "name": "copyFL" },
+            { "type": "builtin", "label": "copy", "name": "copyFR" },
+            { "type": "builtin", "label": "copy", "name": "copySL" },
+            { "type": "builtin", "label": "copy", "name": "copySR" }
+        ],
+        "links": [
+            { "output": "copyFL:Out",   "input": "convFL_L:In" }
+            { "output": "copyFL:Out",   "input": "convFL_R:In" }
+            { "output": "copyFR:Out",   "input": "convFR_R:In" }
+            { "output": "copyFR:Out",   "input": "convFR_L:In" }
+            { "output": "copySL:Out",   "input": "convSL_L:In" }
+            { "output": "copySL:Out",   "input": "convSL_R:In" }
+            { "output": "copySR:Out",   "input": "convSR_R:In" }
+            { "output": "copySR:Out",   "input": "convSR_L:In" }
+            { "output": "convFL_L:Out", "input": "mixL:In 1" }
+            { "output": "convFR_L:Out", "input": "mixL:In 2" }
+            { "output": "convFC:Out",   "input": "mixL:In 3" }
+            { "output": "convLFE:Out",  "input": "mixL:In 4" }
+            { "output": "convSL_L:Out", "input": "mixL:In 5" }
+            { "output": "convSR_L:Out", "input": "mixL:In 6" }
+            { "output": "convFL_R:Out", "input": "mixR:In 1" }
+            { "output": "convFR_R:Out", "input": "mixR:In 2" }
+            { "output": "convFC:Out",   "input": "mixR:In 3" }
+            { "output": "convLFE:Out",  "input": "mixR:In 4" }
+            { "output": "convSL_R:Out", "input": "mixR:In 5" }
+            { "output": "convSR_R:Out", "input": "mixR:In 6" }
+        ],
+        "inputs":  [ "copyFL:In" "copyFR:In" "convFC:In" "convLFE:In" "copySL:In" "copySR:In" ],
+        "outputs": [ "mixL:Out" "mixR:Out" ]
+    },
+    capture.props = {
+        "media.class": "Audio/Sink",
+        "audio.channels": 6,
+        "audio.position": [ FL FR FC LFE SL SR ],
+        "node.dont-fallback": true,
+        "node.linger": true,
+        "filter.smart": true,
+        "filter.smart.disabled": true,
+        "filter.smart.target": { "node.name": "'${virtual_sink_name:?}'" },
+        "filter.smart.after": [ "'${virtual_sink_name:?}'" "filter-chain-sink" ],
+        "filter.smart.name": "'${virtual_surround_sink_name:?}'"
+    },
+    playback.props = {
+        "node.passive": true,
+        "audio.channels": 2,
+        "audio.position": [ FL FR ],
+        "stream.dont-remix": true
+    }
+}'
+# Check channel counthrir.wav files with command:
+#   > ffprobe -v error -select_streams a:0 -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 /home/deck/.config/pipewire/hrir.wav
+# Or get all info
+#   ffprobe -v error -print_format json -show_format -show_streams /home/deck/.config/pipewire/hrir.wav
 
 # Add the DBUS_SESSION_BUS_ADDRESS environment variable
 if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
@@ -152,6 +226,36 @@ kill_all_running_instances() {
 }
 
 run() {
+    # Default value for channels
+    local channels="8"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --channels=*)
+                channels="${1#*=}"
+                ;;
+            --channels)
+                shift
+                channels="$1"
+                ;;
+            *)
+                echo "Invalid arg: $1"
+                print_usage_and_exit 1
+                ;;
+        esac
+        shift
+    done
+
+    # Configure the module args to use
+    if [[ "$channels" != "6" && "$channels" != "8" ]]; then
+         echo "Invalid channels value: $channels. Must be 6 or 8."
+         exit 1
+    fi
+    local module_args="${args_8}"
+    if [[ "$channels" != "8" ]]; then
+        module_args="${args_6}"
+    fi
+
     if [ -f "${pid_file:?}" ]; then
         kill -TERM $(cat "${pid_file:?}") 2>/dev/null || true
         rm -f "${pid_file:?}"
@@ -162,8 +266,8 @@ run() {
         exit 1
     fi
 
-    echo "Creating and loading module ${module_name:?} - ${virtual_surround_sink_name:?}"
-    pw-cli -m load-module ${module_name:?} ${args:?} &
+    echo "Creating and loading module ${module_name:?} with ${channels:?} channels - ${virtual_surround_sink_name:?}"
+    pw-cli -m load-module ${module_name:?} ${module_args:?} &
     pw_cli_pid=$!
     echo ${pw_cli_pid:?} > ${pid_file:?}
     sleep 1 # <- sleep for a second to ensure everything is loaded before linking
@@ -250,8 +354,8 @@ stop_service() {
 }
 
 print_usage_and_exit() {
-    echo "Usage: $0 {run|install|uninstall|restart|stop|kill-all}"
-    exit $1
+    echo "Usage: $0 {run|install|uninstall|restart|stop|kill-all} [--channels=<6|8>] [additional args...]"
+    exit "$1"
 }
 
 # Parse command line arguments
@@ -259,27 +363,31 @@ if [[ $# -eq 0 ]]; then
   print_usage_and_exit 1
 fi
 
-case "$1" in
-  "run")
-    run
-  ;;
-  "install")
-    install_service
-  ;;
-  "uninstall")
-    uninstall_service
-  ;;
-  "restart")
-    restart_service
-  ;;
-  "stop")
-    stop_service
-  ;;
-  "kill-all")
-    kill_all_running_instances
-  ;;
-  *)
-    echo "Invalid command: $1"
-    print_usage_and_exit 1
-  ;;
+# The first parameter is the command.
+cmd="$1"
+shift
+
+case "$cmd" in
+    "run")
+        run "$@"
+        ;;
+    "install")
+        install_service "$@"
+        ;;
+    "uninstall")
+        uninstall_service "$@"
+        ;;
+    "restart")
+        restart_service "$@"
+        ;;
+    "stop")
+        stop_service "$@"
+        ;;
+    "kill-all")
+        kill_all_running_instances "$@"
+        ;;
+    *)
+        echo "Invalid command: $cmd"
+        print_usage_and_exit 1
+        ;;
 esac
