@@ -90,19 +90,14 @@ args_8='{
     capture.props = {
         "media.class": "Audio/Sink",
         "audio.channels": 8,
-        "audio.position": ["FL","FR","FC","LFE","RL","RR","SL","SR"],
+        "audio.position": [ FL FR FC LFE RL RR SL SR ],
         "node.dont-fallback": true,
-        "node.linger": true,
-        "filter.smart": true,
-        "filter.smart.disabled": true,
-        "filter.smart.target": { "node.name": "'${virtual_sink_name:?}'" },
-        "filter.smart.after": [ "'${virtual_sink_name:?}'" "filter-chain-sink" ],
-        "filter.smart.name": "'${virtual_surround_sink_name:?}'"
+        "node.linger": true
     },
     playback.props = {
         "node.passive": true,
         "audio.channels": 2,
-        "audio.position": ["FL","FR"],
+        "audio.position": [ FL FR ],
         "stream.dont-remix": true
     }
 }'
@@ -161,12 +156,7 @@ args_6='{
         "audio.channels": 6,
         "audio.position": [ FL FR FC LFE SL SR ],
         "node.dont-fallback": true,
-        "node.linger": true,
-        "filter.smart": true,
-        "filter.smart.disabled": true,
-        "filter.smart.target": { "node.name": "'${virtual_sink_name:?}'" },
-        "filter.smart.after": [ "'${virtual_sink_name:?}'" "filter-chain-sink" ],
-        "filter.smart.name": "'${virtual_surround_sink_name:?}'"
+        "node.linger": true
     },
     playback.props = {
         "node.passive": true,
@@ -272,25 +262,25 @@ run() {
     echo ${pw_cli_pid:?} > ${pid_file:?}
     sleep 1 # <- sleep for a second to ensure everything is loaded before linking
 
-    # Configure loaded module
-    #   NOTE:
-    #       The avaiable outputs and inputs are found by running 'pw-link -o' and 'pw-link -i'
-    echo "Link outputs of module ${module_name:?} - ${virtual_surround_sink_name:?} to module ${virtual_sink_name:?}"
-    virtual_surround_sink_outputs_prefix="output.${virtual_surround_sink_name:?}:output_"
-    virtual_sink_inputs_prefix="input.${virtual_sink_name:?}:playback_"
-    for ch in FL FR; do
-        local output="${virtual_surround_sink_outputs_prefix:?}${ch:?}"
-        local input="${virtual_sink_inputs_prefix:?}${ch:?}"
-        # Attempt to disconnect the link; ignore any errors.
-        pw-link --disconnect "${output:?}" "${input:?}" >/dev/null 2>&1 || true
-        # Now (re)connect the link.
-        echo "${output:?} -> ${input:?}"
-        if ! pw-link "${output:?}" "${input:?}"; then
-            _term
-            echo "An error occured when linking nodes. Unable to proceed. Exit!"
-            exit 2
-        fi
-    done
+    ## # Configure loaded module
+    ## #   NOTE:
+    ## #       The avaiable outputs and inputs are found by running 'pw-link -o' and 'pw-link -i'
+    ## echo "Link outputs of module ${module_name:?} - ${virtual_surround_sink_name:?} to module ${virtual_sink_name:?}"
+    ## virtual_surround_sink_outputs_prefix="output.${virtual_surround_sink_name:?}:output_"
+    ## virtual_sink_inputs_prefix="input.${virtual_sink_name:?}:playback_"
+    ## for ch in FL FR; do
+    ##     local output="${virtual_surround_sink_outputs_prefix:?}${ch:?}"
+    ##     local input="${virtual_sink_inputs_prefix:?}${ch:?}"
+    ##     # Attempt to disconnect the link; ignore any errors.
+    ##     pw-link --disconnect "${output:?}" "${input:?}" >/dev/null 2>&1 || true
+    ##     # Now (re)connect the link.
+    ##     echo "${output:?} -> ${input:?}"
+    ##     if ! pw-link "${output:?}" "${input:?}"; then
+    ##         _term
+    ##         echo "An error occured when linking nodes. Unable to proceed. Exit!"
+    ##         exit 2
+    ##     fi
+    ## done
 
     # Wait for child process to exit:
     echo "Waiting for PID '${pw_cli_pid}' to exit"
