@@ -12,6 +12,7 @@ import {HrirFile, PluginConfig} from "../interfaces";
 import {getPluginConfig, setPluginConfig} from "../constants";
 import {call} from "@decky/api";
 import {PanelSocialButton} from "./elements/socialButton";
+import {VscSurroundWith} from "react-icons/vsc";
 
 interface PluginConfigViewProps {
     onGoBack: () => void;
@@ -59,9 +60,9 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
         }
     };
 
-    const runSoundTest = async () => {
+    const runSoundTest = async (sink: string) => {
         console.info(`[PluginConfigView] Exec sound test`);
-        await call<[], HrirFile[]>('run_sound_test');
+        await call<[original: string]>('run_sound_test', sink);
     }
 
     useEffect(() => {
@@ -124,19 +125,49 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
                             <DialogButton
                                 style={{margin: '5px'}}
                                 onClick={() => {
-                                    runSoundTest()
-                                }}>
-                                <MdSurroundSound/> Run Sound Test
-                            </DialogButton>
-                        </PanelSectionRow>
-                        <PanelSectionRow>
-                            <DialogButton
-                                style={{margin: '5px'}}
-                                onClick={() => {
                                     openWeb(`https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc`);
                                 }}>
                                 <MdWeb/> Go To HRTF Database
                             </DialogButton>
+                        </PanelSectionRow>
+
+                        <PanelSectionRow>
+                            <div style={{
+                                margin: '20px 5px 0',
+                                padding: '0px 0px 8px',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                fontStyle: 'normal',
+                                textAlign: 'left',
+                                textDecoration: 'none',
+                                textIndent: '0',
+                                textTransform: 'uppercase',
+                                lineHeight: '20px',
+                                letterSpacing: '.5px',
+                            }}>Test your selected HRIR profile
+                            </div>
+                            <DialogButton
+                                style={{margin: '5px'}}
+                                onClick={() => runSoundTest('virtual-surround-sound')}
+                            >
+                                <MdSurroundSound/> Surround Enabled
+                            </DialogButton>
+                            <DialogButton
+                                style={{margin: '5px'}}
+                                onClick={() => runSoundTest('virtual-sink')}
+                            >
+                                <VscSurroundWith/> Surround Disabled
+                            </DialogButton>
+                            <p style={{fontSize: '0.7rem', marginBottom: '10px'}}>
+                                Compare how audio sounds with and without the virtual surround filter applied.
+                                <br/>
+                                The top button plays the test sequence with the surround filter enabled, while the
+                                bottom button plays it through the default Steam Deck audio sink.
+                                <br/>
+                                Each test cycles through all 7.1 surround positions — Front Left (FL), Front Center
+                                (FC), Front Right (FR), Side Right (SR), Rear Right (RR), Rear Left (RL), Side Left (SL)
+                                — ending with a 50Hz Low-Frequency Effects (LFE) tone.
+                            </p>
                         </PanelSectionRow>
                     </PanelSection>
                     <hr/>
@@ -152,7 +183,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
                         </PanelSocialButton>
                         <PanelSocialButton icon={<SiGithub fill="#f5f5f5"/>}
                                            url="https://github.com/Josh5/decky-virtual-surround-sound">
-                            Github
+                            Plugin Source
                         </PanelSocialButton>
                     </PanelSection>
                 </div>

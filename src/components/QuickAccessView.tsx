@@ -2,6 +2,7 @@ import React, {useEffect, useState} from 'react';
 import type {PluginPage} from "../interfaces";
 import PluginConfigView from "./PluginConfigView";
 import AudioControlsView from "./AudioControlsView";
+import {Footer} from "./elements/authorFooter";
 
 
 const QuickAccessView: React.FC = () => {
@@ -27,6 +28,9 @@ const QuickAccessView: React.FC = () => {
                     onChangePage={changePage}
                 />
             )}
+
+            {/* Footer */}
+            <Footer/>
         </div>
     )
         ;

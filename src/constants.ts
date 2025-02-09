@@ -1,6 +1,8 @@
 // Site URLs
 import type {PluginConfig} from "./interfaces";
 
+export const deckyPluginAvatarUrl = "https://deckverified.games/deck-verified/api/v1/images/plugin/decky-virtual-surround-sound/avatar.jpg";
+
 export const restartSteamClient = (): void => {
     SteamClient.User.StartRestart(false);
 }

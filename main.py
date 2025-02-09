@@ -5,8 +5,6 @@ import os
 import re
 import shutil
 import signal
-import subprocess
-from typing import Any, Coroutine
 
 # The decky plugin module is located at decky-loader/plugin
 # For easy intellisense checkout the decky-loader code repo
@@ -264,9 +262,9 @@ class Plugin:
             decky.logger.error("Error: Failed to copy HRIR WAV file: %s", e)
         return False
 
-    async def run_sound_test(self):
-        """Run a surround sound test using the Virtual Surround Sound sink"""
-        await service_script_exec("speaker-test")
+    async def run_sound_test(self, sink: str):
+        """Run a surround sound test using the sink specified"""
+        await service_script_exec("speaker-test", ["--sink", sink])
 
     async def parse_properties(self, lines, start_index):
         """
