@@ -169,6 +169,15 @@ args_6='{
         "stream.dont-remix": true
     }
 }'
+# 
+#             { "output": "convFC:Out",   "input": "mixL:In 3", "gain": "+3dB" }
+#             { "output": "convLFE:Out",  "input": "mixL:In 4" }
+#             { "output": "convSL_L:Out", "input": "mixL:In 5" }
+#             { "output": "convSR_L:Out", "input": "mixL:In 6" }
+#             { "output": "convFL_R:Out", "input": "mixR:In 1" }
+#             { "output": "convFR_R:Out", "input": "mixR:In 2" }
+#             { "output": "convFC:Out",   "input": "mixR:In 3", "gain": "+3dB" }
+#             
 # Check channel counthrir.wav files with command:
 #   > ffprobe -v error -select_streams a:0 -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 /home/deck/.config/pipewire/hrir.wav
 # Or get all info

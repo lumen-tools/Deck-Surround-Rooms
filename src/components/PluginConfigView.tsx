@@ -29,7 +29,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
             const hrirFiles = await call<[], HrirFile[]>('get_hrir_file_list');
             setHrirFileList(hrirFiles || []);
         } catch (error) {
-            console.error("[PluginConfigView] Error fetching game details:", error);
+            console.error("[decky-virtual-surround-sound:PluginConfigView] Error fetching game details:", error);
         } finally {
             setIsLoading(false);
         }
@@ -48,25 +48,25 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
     const handleHrirSelection = async (hrirName: string) => {
         const selectedHrir = hrirFileList.find((file) => file.label === hrirName);
         if (!selectedHrir) {
-            console.error(`[PluginConfigView] HRIR file not found for name: ${hrirName}`);
+            console.error(`[decky-virtual-surround-sound:PluginConfigView] HRIR file not found for name: ${hrirName}`);
             return;
         }
         const hrirPath = selectedHrir.path;
         const result = await call<[hrirPath: string], boolean>('set_hrir_file', hrirPath);
         if (!result) {
-            console.error("[PluginConfigView] Error saving new HRIR file:", result);
+            console.error("[decky-virtual-surround-sound:PluginConfigView] Error saving new HRIR file:", result);
         } else {
             updateConfig({hrirName: hrirName});
         }
     };
 
     const runSoundTest = async (sink: string) => {
-        console.info(`[PluginConfigView] Exec sound test`);
+        console.info(`[decky-virtual-surround-sound:PluginConfigView] Exec sound test`);
         await call<[original: string]>('run_sound_test', sink);
     }
 
     useEffect(() => {
-        console.log(`[PluginConfigView] Mounted`);
+        console.log(`[decky-virtual-surround-sound:PluginConfigView] Mounted`);
         updateHrirFileListList()
     }, []);
 

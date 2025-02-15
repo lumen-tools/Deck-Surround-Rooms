@@ -6,11 +6,29 @@ import {
     // routerHook
 } from "@decky/api"
 import QuickAccessView from "./components/QuickAccessView";
-import { MdSurroundSound } from "react-icons/md";
+import {MdSurroundSound} from "react-icons/md";
+import {getCurrentMixerProfile, setMixerProfileInBackend} from "./constants";
 
+let mixerProfileListenerIntervalId: undefined | number;
+
+const currentProfileListener = () => {
+    mixerProfileListenerIntervalId = window.setInterval(() => {
+        getCurrentMixerProfile().then((mixerProfile) => {
+            setMixerProfileInBackend(mixerProfile)
+        })
+    }, 5000);
+
+    return () => {
+        if (mixerProfileListenerIntervalId) {
+            clearInterval(mixerProfileListenerIntervalId);
+        }
+    };
+};
 
 export default definePlugin(() => {
-    console.log("Virtual Surround Sound plugin initializing, this is called once on frontend startup")
+    console.log("[decky-virtual-surround-sound:index] Plugin initializing.")
+
+    const unregisterCurrentProfileListener = currentProfileListener();
 
     return {
         // The name shown in various decky menus
@@ -25,7 +43,8 @@ export default definePlugin(() => {
         icon: <MdSurroundSound/>,
         // The function triggered when your plugin unloads
         onDismount() {
-            console.log("Unloading")
+            console.log("[decky-virtual-surround-sound:index] Unloading background profile listener.")
+            if (unregisterCurrentProfileListener) unregisterCurrentProfileListener();
         },
     };
 });

@@ -314,23 +314,31 @@ class Plugin:
                     current_sink = {
                         'index': int(sink_match.group(1)),
                         'name': 'Unknown',
-                        'description': 'No description'
+                        'description': 'No description',
+                        'channel_map': []
                     }
+                    continue
+                if current_sink is None:
                     continue
 
                 # Capture sink name
                 name_match = re.match(r'\s*Name:\s+(.*)', line)
-                if name_match and current_sink is not None:
+                if name_match:
                     current_sink['name'] = name_match.group(1).strip()
                     continue
 
                 # Capture sink description
                 desc_match = re.match(r'\s*Description:\s+(.*)', line)
-                if desc_match and current_sink is not None:
+                if desc_match:
                     current_sink['description'] = desc_match.group(1).strip()
                     continue
 
-            # Add the last sink block if exists
+                # Capture channel map information
+                chmap_match = re.match(r'\s*Channel Map:\s+(.*)', line)
+                if chmap_match:
+                    channels = chmap_match.group(1).split(',')
+                    current_sink['channel_map'] = [ch.strip() for ch in channels]
+                    continue
             if current_sink is not None:
                 sinks.append(current_sink)
         except FileNotFoundError:
@@ -457,13 +465,18 @@ class Plugin:
 
     async def set_sink_for_application(self, sink_input_index: str, target_sink_index: str):
         """Moves the sink output for the given app"""
+        #  > pactl list sink-inputs
         # Plex - Sink Input #649
         # Plex -         Sink: 50
+        #
+        #  > pactl list sinks
         # Virtual Sink: 50
         # Virtual Surround Sound Sink: 57
-        #  pactl move-sink-input 649 50
-        #  pactl list sink-inputs
-        #  pactl list sinks
+        #
+        #  > pactl move-sink-input 649 50
+        #  > pactl move-sink-input 1790 49
+        #  > pactl move-sink-input 1868 433
+        #  > pactl move-sink-input 1868 49
         try:
             process = await asyncio.create_subprocess_exec(
                 "pactl", 'move-sink-input', str(sink_input_index), str(target_sink_index),
@@ -474,10 +487,96 @@ class Plugin:
             await process.communicate()
             return process.returncode == 0
         except FileNotFoundError:
-            decky.logger.warning("ffprobe not found. HRIR channel detection will be skipped.")
+            decky.logger.warning("pactl not found.")
             return False
         except Exception as e:
-            decky.logger.error(f"Error checking ffprobe: {e}")
+            decky.logger.error(f"Error moving sink input: {e}")
+            return False
+
+    async def set_mixer_profile(self, mixer_profile):
+        """
+        Sets per-channel volumes on the sink named "virtual-surround-sound"
+        using the provided mixer_profile dict.
+        
+        The mixer_profile is expected to be a dict like:
+          {
+            "name": "default",
+            "usePerAppProfile": false,
+            "volumes": {
+              "FL": 100,
+              "FR": 100,
+              "FC": 100,
+              "LFE": 100,
+              "RL": 100,
+              "RR": 100,
+              "SL": 100,
+              "SR": 100
+            }
+          }
+        """
+        sinks = await self.get_sinks()
+        target_sink = None
+        for sink in sinks:
+            # Look for the sink named "input.virtual-surround-sound"
+            print(sink)
+            if sink.get("name") == "input.virtual-surround-sound":
+                target_sink = sink
+                break
+        if target_sink is None:
+            decky.logger.error("Sink 'virtual-surround-sound' not found")
+            return False
+
+        sink_index = target_sink.get("index")
+        channel_map = target_sink.get("channel_map", [])
+        if not channel_map:
+            decky.logger.error("Channel Map not found for sink 'virtual-surround-sound'")
+            return False
+
+        # Map full channel names to short codes used in mixer_profile.
+        # The pactl command will return the channels as "front-left" and "front-right".
+        channel_name_map = {
+            "front-left": "FL",
+            "front-right": "FR",
+            "front-center": "FC",
+            "lfe": "LFE",
+            "rear-left": "RL",
+            "rear-right": "RR",
+            "side-left": "SL",
+            "side-right": "SR"
+        }
+        # Since we need to map the volume args in the correct order, we will map them based on the sink channel_map,
+        # then read each channel volume provided in the mixer_profile in the correct order.
+        volume_args = []
+        for ch in channel_map:
+            short_code = channel_name_map.get(ch)
+            if short_code and short_code in mixer_profile.get("volumes", {}):
+                volume_value = mixer_profile["volumes"][short_code]
+                # Build a per-channel volume argument (e.g. "100%")
+                volume_args.append(f"{volume_value}%")
+            else:
+                volume_args.append(f"100%")
+
+        if not volume_args:
+            decky.logger.info("No matching channels found in mixer profile for sink channel map")
+            return False
+
+        # Execute pactl to set the per-channel volume.
+        command = ["pactl", "set-sink-volume", str(sink_index)] + volume_args
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=subprocess_exec_env()
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                decky.logger.error("Failed to set mixer profile: " + stderr.decode())
+                return False
+            decky.logger.info(f"Mixer profile applied on sink {sink_index} with volumes: {volume_args}")
+            return True
+        except Exception as e:
+            decky.logger.error(f"Error setting mixer profile: {e}")
             return False
 
     async def test(self):
@@ -489,6 +588,24 @@ class Plugin:
         print(json.dumps(sinks, indent=2))
         sink_inputs = await self.get_sink_inputs()
         print(json.dumps(sink_inputs, indent=2))
+
+        # For testing set_mixer_profile, define a mixer_profile dict:
+        mixer_profile = {
+            "name": "default",
+            "usePerAppProfile": False,
+            "volumes": {
+                "FL": 50,
+                "FR": 50,
+                "FC": 50,
+                "LFE": 20,
+                "RL": 100,
+                "RR": 100,
+                "SL": 80,
+                "SR": 80
+            }
+        }
+        # Uncomment to test setting the mixer profile:
+        await plugin.set_mixer_profile(mixer_profile)
 
 
 if __name__ == '__main__':
