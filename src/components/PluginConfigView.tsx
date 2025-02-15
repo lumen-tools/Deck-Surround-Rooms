@@ -182,7 +182,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({onGoBack,}) => {
                             Discord
                         </PanelSocialButton>
                         <PanelSocialButton icon={<SiGithub fill="#f5f5f5"/>}
-                                           url="https://github.com/Josh5/decky-virtual-surround-sound">
+                                           url="https://github.com/DeckSettings/decky-virtual-surround-sound">
                             Plugin Source
                         </PanelSocialButton>
                     </PanelSection>
