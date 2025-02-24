@@ -1,4 +1,5 @@
 export interface PluginConfig {
+    notesAcknowledgedV1: boolean;
     hrirName: string;
     channelCount: number;
     usePerAppProfiles?: boolean;

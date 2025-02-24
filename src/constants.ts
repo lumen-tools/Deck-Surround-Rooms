@@ -64,6 +64,7 @@ export const defaultMixerProfile = {
 
 export const getPluginConfig = (): PluginConfig => {
     const defaultConfig: PluginConfig = {
+        notesAcknowledgedV1: false,
         hrirName: "Steam Audio",
         channelCount: 8,
         usePerAppProfiles: false,
