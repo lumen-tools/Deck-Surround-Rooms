@@ -53,26 +53,28 @@ export const defaultMixerProfile = {
     volumes: {
         FL: 100,
         FR: 100,
-        FC: 100,
+        FC: 120,
         LFE: 100,
-        RL: 100,
-        RR: 100,
-        SL: 100,
-        SR: 100
+        RL: 80,
+        RR: 80,
+        SL: 90,
+        SR: 90
     }
 }
+
+const settingsLocalStorageKey = "decky-virtual-surround-sound-dev"
 
 export const getPluginConfig = (): PluginConfig => {
     const defaultConfig: PluginConfig = {
         notesAcknowledgedV1: false,
-        hrirName: "Steam Audio",
+        hrirName: "HRTF from Aureal Vortex 2 - WIP v2",
         channelCount: 8,
         usePerAppProfiles: false,
         perAppProfiles: {
             default: defaultMixerProfile
         }
     };
-    const dataJson = window.localStorage.getItem("decky-virtual-surround-sound");
+    const dataJson = window.localStorage.getItem(settingsLocalStorageKey);
     if (dataJson) {
         try {
             const parsedConfig = JSON.parse(dataJson);
@@ -91,7 +93,7 @@ export const setPluginConfig = (updates: Partial<PluginConfig>): void => {
     // Deep merge the updates into the current config:
     const newConfig = mergeDeep(currentConfig, updates);
     try {
-        window.localStorage.setItem("decky-virtual-surround-sound", JSON.stringify(newConfig));
+        window.localStorage.setItem(settingsLocalStorageKey, JSON.stringify(newConfig));
     } catch (error) {
         console.error("[decky-virtual-surround-sound:constants] Failed to save plugin config:", error);
     }
