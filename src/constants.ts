@@ -62,7 +62,7 @@ export const defaultMixerProfile = {
     }
 }
 
-const settingsLocalStorageKey = "decky-virtual-surround-sound-dev"
+const settingsLocalStorageKey = "decky-virtual-surround-sound"
 
 export const getPluginConfig = (): PluginConfig => {
     const defaultConfig: PluginConfig = {
