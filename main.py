@@ -194,7 +194,7 @@ class Plugin:
     async def get_hrir_file_list(self) -> list[dict[str, str | None | int]] | None:
         """Lists available HRIR files with channel count."""
         script_directory = os.path.dirname(os.path.abspath(__file__))
-        hrir_directory = os.path.join(script_directory, "assets", "hrir-audio")
+        hrir_directory = os.path.join(script_directory, "hrir-audio")
         hrir_files = []
         i = 1
         # Check if ffprobe is installed
@@ -248,7 +248,6 @@ class Plugin:
     async def set_hrir_file(self, selected_hrir_path: str) -> bool:
         """Installs the specified HRIR file."""
         script_directory = os.path.dirname(os.path.abspath(__file__))
-        hrir_directory = os.path.join(script_directory, "hrir-audio")
         pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewire")
         decky.logger.info("Installing %s", selected_hrir_path)
         try:

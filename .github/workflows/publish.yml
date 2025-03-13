@@ -28,6 +28,7 @@ jobs:
         id: prepare
         run: |
           plugin_version=$(node -p "require('./package.json').version")
+          echo "plugin_name=decky-virtual-surround-sound" >> $GITHUB_OUTPUT
           echo "plugin_version=${plugin_version:?}" >> $GITHUB_OUTPUT
 
       # Install dependencies
@@ -47,27 +48,27 @@ jobs:
       - name: Create output directory
         run: |
           rm -rfv ./out
-          mkdir -p ./out
-          cp -rfv ./defaults ./out/decky-virtual-surround-sound
-          cp -fv ./plugin.json ./out/decky-virtual-surround-sound/
-          cp -fv ./package.json ./out/decky-virtual-surround-sound/
-          cp -fv ./LICENSE ./out/decky-virtual-surround-sound/
-          cp -fv ./README.md ./out/decky-virtual-surround-sound/
-          cp -rfv ./dist ./out/decky-virtual-surround-sound/dist
+          mkdir -p ./out/${{ steps.prepare.outputs.plugin_name }}
+          cp -rfv ./defaults ./out/${{ steps.prepare.outputs.plugin_name }}/
+          cp -fv ./plugin.json ./out/${{ steps.prepare.outputs.plugin_name }}/
+          cp -fv ./package.json ./out/${{ steps.prepare.outputs.plugin_name }}/
+          cp -fv ./LICENSE ./out/${{ steps.prepare.outputs.plugin_name }}/
+          cp -fv ./README.md ./out/${{ steps.prepare.outputs.plugin_name }}/
+          cp -rfv ./dist ./out/${{ steps.prepare.outputs.plugin_name }}/dist
 
       - name: zip/tar release
         run: |
           cd out
-          zip -r decky-virtual-surround-sound.zip decky-virtual-surround-sound/*
-          tar -czvf decky-virtual-surround-sound.tar.gz decky-virtual-surround-sound
+          zip -r ${{ steps.prepare.outputs.plugin_name }}.zip ${{ steps.prepare.outputs.plugin_name }}/*
+          tar -czvf ${{ steps.prepare.outputs.plugin_name }}.tar.gz ${{ steps.prepare.outputs.plugin_name }}
 
       # Upload artifacts
       - name: Upload Artifacts to Github
         uses: actions/upload-artifact@v4
         with:
-          name: decky-virtual-surround-sound
+          name: ${{ steps.prepare.outputs.plugin_name }}
           path: |
-            ./out/decky-virtual-surround-sound/*
+            ./out/${{ steps.prepare.outputs.plugin_name }}/*
 
       # Generate tagged release (should not be updated)
       - name: Check Tag Already Exists
@@ -85,7 +86,7 @@ jobs:
           name: "Tagged Build: ${{ steps.prepare.outputs.plugin_version }}"
           body: "Versioned release"
           token: ${{ secrets.GITHUB_TOKEN }}
-          artifacts: "./out/decky-virtual-surround-sound.zip,./out/decky-virtual-surround-sound.tar.gz"
+          artifacts: "./out/${{ steps.prepare.outputs.plugin_name }}.zip,./out/${{ steps.prepare.outputs.plugin_name }}.tar.gz"
           generateReleaseNotes: true
           allowUpdates: false
           skipIfReleaseExists: true
@@ -99,7 +100,7 @@ jobs:
           name: "Development Build"
           body: "Latest development release"
           token: ${{ secrets.GITHUB_TOKEN }}
-          artifacts: "./out/decky-virtual-surround-sound.zip,./out/decky-virtual-surround-sound.tar.gz"
+          artifacts: "./out/${{ steps.prepare.outputs.plugin_name }}.zip,./out/${{ steps.prepare.outputs.plugin_name }}.tar.gz"
           generateReleaseNotes: true
           allowUpdates: true
           removeArtifacts: true
