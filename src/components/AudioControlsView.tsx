@@ -329,10 +329,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({onChangePage}) => 
                         }}
                     />
                 </PanelSectionRow>
-                {/*
-                TODO: Create volume mixer
-                    - Create a volume slider for each channel configured in the virtual surround sound sink
-                */}
+                {/*Volume mixer*/}
                 <PanelSectionRow>
                     {channels.map(({code, label}) => (
                         <SliderField

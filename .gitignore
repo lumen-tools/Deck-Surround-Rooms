@@ -58,6 +58,7 @@ cli/*
 cli/decky
 
 # Dev env setup
+/hrir-audio
 /service.sh
 /decky.py
 /source.sh

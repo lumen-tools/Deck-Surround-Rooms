@@ -42,7 +42,8 @@ npm i -g pnpm@9
 2. In your local fork/own plugin-repository run these commands:
    1. ``pnpm i``
    2. ``ln -sf ./defaults/service.sh ./service.sh``
-   3. ``pnpm run build``
+   3. ``ln -sf ./defaults/hrir-audio ./hrir-audio``
+   4. ``pnpm run build``
       - These setup pnpm and build the frontend code for testing.
 3. Use the [decky-frontend-lib](https://github.com/SteamDeckHomebrew/decky-frontend-lib) documentation to integrate additional functionality as needed.
 4. If using VSCodium/VSCode, run the `setup` and `build` and `deploy` tasks. If not using VSCodium etc. you can derive your own makefile or just manually utilize the scripts for these commands as you see fit.
