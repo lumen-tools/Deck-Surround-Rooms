@@ -19,9 +19,10 @@ settings.read()
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 hrir_directory = os.path.join(script_directory, "hrir-audio")
-default_hrir_file="HRTF from Aureal Vortex 2 - WIP v2.wav"
+default_hrir_file = "HRTF from Aureal Vortex 2 - WIP v2.wav"
 pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewire")
 hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
+
 
 def subprocess_exec_env():
     uid = os.getuid()
@@ -133,8 +134,8 @@ class Plugin:
             os.path.join(decky.DECKY_USER_HOME, ".local", "share", "decky-template"))
 
     async def init_config(self):
-        if not os.path.join(pipewire_config_path, "hrir.wav"):
-            decky.logger.info("Installing default HRIR .wav file %s", default_hrir_file)
+        if not os.path.exists(os.path.join(pipewire_config_path, "hrir.wav")):
+            decky.logger.info("Installing default HRIR .wav file '%s'", default_hrir_file)
             await self.set_hrir_file(os.path.join(hrir_directory, default_hrir_file))
         decky.logger.info("Installing service")
         await service_script_exec("install")
