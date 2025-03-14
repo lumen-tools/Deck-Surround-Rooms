@@ -17,6 +17,11 @@ settingsDir = os.environ["DECKY_PLUGIN_SETTINGS_DIR"]
 settings = SettingsManager(name="settings", settings_directory=settingsDir)
 settings.read()
 
+script_directory = os.path.dirname(os.path.abspath(__file__))
+hrir_directory = os.path.join(script_directory, "hrir-audio")
+default_hrir_file="HRTF from Aureal Vortex 2 - WIP v2.wav"
+pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewire")
+hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
 
 def subprocess_exec_env():
     uid = os.getuid()
@@ -29,7 +34,6 @@ def subprocess_exec_env():
 async def service_script_exec(command, args=None):
     if args is None:
         args = []
-    script_directory = os.path.dirname(os.path.abspath(__file__))
     service_script = os.path.join(script_directory, "service.sh")
     try:
         process = await asyncio.create_subprocess_exec(
@@ -53,8 +57,9 @@ class Plugin:
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
         self.loop = asyncio.get_event_loop()
-        decky.logger.info("Installing service")
-        await service_script_exec("install")
+
+        # Install initial files
+        await self.init_config()
 
         # Monitor running apps to auto-assign the correct audio sink
         self.running = True
@@ -104,6 +109,8 @@ class Plugin:
     async def _uninstall(self):
         decky.logger.info("Uninstalling service")
         await service_script_exec("uninstall")
+        if os.path.exists(hrir_dest_path):
+            os.remove(hrir_dest_path)
 
     # Migrations that should be performed before entering `_main()`.
     async def _migration(self):
@@ -124,6 +131,13 @@ class Plugin:
         decky.migrate_runtime(
             os.path.join(decky.DECKY_HOME, "template"),
             os.path.join(decky.DECKY_USER_HOME, ".local", "share", "decky-template"))
+
+    async def init_config(self):
+        if not os.path.join(pipewire_config_path, "hrir.wav"):
+            decky.logger.info("Installing default HRIR .wav file %s", default_hrir_file)
+            await self.set_hrir_file(os.path.join(hrir_directory, default_hrir_file))
+        decky.logger.info("Installing service")
+        await service_script_exec("install")
 
     async def get_enabled_apps_list(self):
         """Reads the current list of enabled apps"""
@@ -193,8 +207,6 @@ class Plugin:
 
     async def get_hrir_file_list(self) -> list[dict[str, str | None | int]] | None:
         """Lists available HRIR files with channel count."""
-        script_directory = os.path.dirname(os.path.abspath(__file__))
-        hrir_directory = os.path.join(script_directory, "hrir-audio")
         hrir_files = []
         i = 1
         # Check if ffprobe is installed
@@ -247,13 +259,11 @@ class Plugin:
 
     async def set_hrir_file(self, selected_hrir_path: str) -> bool:
         """Installs the specified HRIR file."""
-        script_directory = os.path.dirname(os.path.abspath(__file__))
-        pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewire")
         decky.logger.info("Installing %s", selected_hrir_path)
         try:
             os.makedirs(os.path.dirname(pipewire_config_path), exist_ok=True)
-            hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
             shutil.copy2(selected_hrir_path, hrir_dest_path)
+            os.chmod(hrir_dest_path, 0o644)
             decky.logger.info("Copied %s to %s", selected_hrir_path, hrir_dest_path)
             await service_script_exec("restart")
             return True
