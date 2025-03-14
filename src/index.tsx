@@ -1,7 +1,4 @@
 import {
-    staticClasses
-} from "@decky/ui";
-import {
     definePlugin,
     // routerHook
 } from "@decky/api"
@@ -34,7 +31,7 @@ export default definePlugin(() => {
         // The name shown in various decky menus
         name: "Virtual Surround Sound",
         // The element displayed at the top of your plugin's menu
-        titleView: <div className={staticClasses.Title}>Virtual Surround Sound</div>,
+        titleView: <div>Virtual Surround Sound</div>,
         // Preserve the plugin's state while the QAM is closed
         alwaysRender: true,
         // The content of your plugin's menu
