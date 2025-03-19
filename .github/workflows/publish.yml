@@ -13,94 +13,142 @@ jobs:
       contents: write
       packages: write
     steps:
-      # Checkout files
+      # --
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20.18"
 
-      # Prepare build environment
+      # --
       - name: Prepare build environment
         shell: bash
         id: prepare
         run: |
+          plugin_name=$(node -p "require('./package.json').name")
           plugin_version=$(node -p "require('./package.json').version")
-          echo "plugin_name=decky-virtual-surround-sound" >> $GITHUB_OUTPUT
+          echo "plugin_name=${plugin_name:?}" >> $GITHUB_OUTPUT
           echo "plugin_version=${plugin_version:?}" >> $GITHUB_OUTPUT
 
-      # Install dependencies
+      # --
+      - name: Append hash to plugin version
+        run: |
+          echo "::notice::This run was triggered by a commit. Appending the commit hash to the plugin version."  
+
+          PACKAGE_FILE="package.json"
+
+          SHA=$(cut -c1-7 <<< "${{ github.event.pull_request.head.sha || github.sha }}")
+          VERSION=$(jq -r '.version' $PACKAGE_FILE)
+          NEW_VERSION="$VERSION-$SHA"
+
+          echo "::notice::Going from $VERSION to $NEW_VERSION"
+
+          tmp=$(mktemp)
+          jq --arg newversion "$NEW_VERSION" '.version = $newversion' $PACKAGE_FILE > $tmp
+          mv $tmp $PACKAGE_FILE
+
+          echo "::endgroup::"
+
+      # --
       - name: Install pnpm
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl tar wget zip
-          npm install -g pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
 
+      # --
       - name: Install Dependencies
-        run: pnpm install
+        run: pnpm install --lockfile-only
 
-      # Build plugin
-      - name: build
-        run: pnpm run build
-
-      - name: Create output directory
+      # --
+      - name: Download Decky CLI
         run: |
-          rm -rfv ./out
-          mkdir -p ./out/${{ steps.prepare.outputs.plugin_name }}
-          cp -rfv ./defaults ./out/${{ steps.prepare.outputs.plugin_name }}/
-          cp -fv ./plugin.json ./out/${{ steps.prepare.outputs.plugin_name }}/
-          cp -fv ./package.json ./out/${{ steps.prepare.outputs.plugin_name }}/
-          cp -fv ./LICENSE ./out/${{ steps.prepare.outputs.plugin_name }}/
-          cp -fv ./README.md ./out/${{ steps.prepare.outputs.plugin_name }}/
-          cp -rfv ./dist ./out/${{ steps.prepare.outputs.plugin_name }}/dist
+          mkdir -p "$(pwd)"/cli
+          curl -L -o "$(pwd)"/cli/decky "https://github.com/SteamDeckHomebrew/cli/releases/latest/download/decky-linux-x86_64"
+          chmod +x "$(pwd)"/cli/decky
 
-      - name: zip/tar release
+      # --
+      - name: Build plugin
+        run: |
+          # Run the CLI as root to get around Docker's weird permissions
+          sudo .vscode/build.sh
+          sudo chown -R $(whoami) out
+
+      # --
+      - name: Unzip plugin
+        run: |
+          mv -v out/*.zip out/${{ steps.prepare.outputs.plugin_name }}.zip
+          for file in out/*.zip; do
+            echo "Unzipping $file"
+            unzip -qq "$file" -d out
+          done
+          rm -f out/${{ steps.prepare.outputs.plugin_name }}.zip
+          mv -v out/* out/${{ steps.prepare.outputs.plugin_name }}
+          tree out
+
+      # --
+      - name: Re-zip plugin
         run: |
           cd out
           zip -r ${{ steps.prepare.outputs.plugin_name }}.zip ${{ steps.prepare.outputs.plugin_name }}/*
-          tar -czvf ${{ steps.prepare.outputs.plugin_name }}.tar.gz ${{ steps.prepare.outputs.plugin_name }}
 
-      # Upload artifacts
-      - name: Upload Artifacts to Github
+      # --
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.prepare.outputs.plugin_name }}
-          path: |
-            ./out/${{ steps.prepare.outputs.plugin_name }}/*
+          name: output
+          path: out/*/
 
-      # Generate tagged release (should not be updated)
-      - name: Check Tag Already Exists
+      # --
+      - name: Check Version Tag Already Exists
         uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 #v1.6.0
-        id: check_tag_exists
+        id: check_version_tag_exists
         with:
           tag: ${{ steps.prepare.outputs.plugin_version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # --
       - name: Generate Tagged Release
         uses: ncipollo/release-action@440c8c1cb0ed28b9f43e4d1d670870f059653174 #v1.16.0
-        if: steps.check_tag_exists.outputs.exists == 'false'
+        if: steps.check_version_tag_exists.outputs.exists == 'false'
         with:
           name: "Tagged Build: ${{ steps.prepare.outputs.plugin_version }}"
           body: "Versioned release"
           token: ${{ secrets.GITHUB_TOKEN }}
-          artifacts: "./out/${{ steps.prepare.outputs.plugin_name }}.zip,./out/${{ steps.prepare.outputs.plugin_name }}.tar.gz"
+          artifacts: "./out/*.zip"
           generateReleaseNotes: true
           allowUpdates: false
           skipIfReleaseExists: true
           tag: ${{ steps.prepare.outputs.plugin_version }}
           commit: master
 
-      # Generate latest development
-      - name: Update Latest Release
+      # --
+      - name: Check Latest Tag Already Exists
+        uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 #v1.6.0
+        id: check_latest_tag_exists
+        with:
+          tag: ${{ steps.prepare.outputs.plugin_version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --
+      - name: Delete Latest Release
+        if: steps.check_latest_tag_exists.outputs.exists == 'true'
+        run: gh release delete latest --cleanup-tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --
+      - name: Generate Latest Release
         uses: ncipollo/release-action@440c8c1cb0ed28b9f43e4d1d670870f059653174 #v1.16.0
         with:
           name: "Development Build"
           body: "Latest development release"
           token: ${{ secrets.GITHUB_TOKEN }}
-          artifacts: "./out/${{ steps.prepare.outputs.plugin_name }}.zip,./out/${{ steps.prepare.outputs.plugin_name }}.tar.gz"
+          artifacts: "./out/*.zip"
           generateReleaseNotes: true
           allowUpdates: true
           removeArtifacts: true
