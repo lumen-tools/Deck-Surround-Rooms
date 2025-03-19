@@ -26,7 +26,11 @@ hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
 
 def subprocess_exec_env():
     uid = os.getuid()
-    env = os.environ.copy()
+    allowed_keys = [
+        "DBUS_SESSION_BUS_ADDRESS", "HOME", "LANG", "PATH", "SHELL", "USER", 
+        "XDG_DATA_DIRS", "XDG_RUNTIME_DIR", "XDG_SESSION_CLASS", "XDG_SESSION_ID", "XDG_SESSION_TYPE", 
+    ]
+    env = {key: os.environ[key] for key in allowed_keys if key in os.environ}
     env['XDG_RUNTIME_DIR'] = f"/run/user/{uid}"
     env['DBUS_SESSION_BUS_ADDRESS'] = f"unix:path=/run/user/{uid}/bus"
     return env
