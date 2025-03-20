@@ -26,6 +26,8 @@ hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
 
 def subprocess_exec_env():
     uid = os.getuid()
+    if uid not in (1000, 1001):
+        decky.logger.warning("Attempting to run subprocess as uid %s. Looks like something is going wrong here.", uid)
     allowed_keys = [
         "DBUS_SESSION_BUS_ADDRESS", "HOME", "LANG", "PATH", "SHELL", "USER", 
         "XDG_DATA_DIRS", "XDG_RUNTIME_DIR", "XDG_SESSION_CLASS", "XDG_SESSION_ID", "XDG_SESSION_TYPE", 

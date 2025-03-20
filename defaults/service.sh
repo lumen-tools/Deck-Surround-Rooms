@@ -390,6 +390,12 @@ print_usage_and_exit() {
     exit "$1"
 }
 
+# Check if the effective user ID is 0 (root)
+if [ "$EUID" -eq 0 ]; then
+    echo "Error: This script must not be run as root. This is bad. You should be running this as a standard user." >&2
+    exit 1
+fi
+
 # Parse command line arguments
 if [[ $# -eq 0 ]]; then
   print_usage_and_exit 1
