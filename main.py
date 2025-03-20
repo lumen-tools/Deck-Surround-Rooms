@@ -1,5 +1,6 @@
 import asyncio
 import asyncio.subprocess
+import contextlib
 import json
 import os
 import re
@@ -29,8 +30,8 @@ def subprocess_exec_env():
     if uid not in (1000, 1001):
         decky.logger.warning("Attempting to run subprocess as uid %s. Looks like something is going wrong here.", uid)
     allowed_keys = [
-        "DBUS_SESSION_BUS_ADDRESS", "HOME", "LANG", "PATH", "SHELL", "USER", 
-        "XDG_DATA_DIRS", "XDG_RUNTIME_DIR", "XDG_SESSION_CLASS", "XDG_SESSION_ID", "XDG_SESSION_TYPE", 
+        "DBUS_SESSION_BUS_ADDRESS", "HOME", "LANG", "PATH", "SHELL", "USER",
+        "XDG_DATA_DIRS", "XDG_RUNTIME_DIR", "XDG_SESSION_CLASS", "XDG_SESSION_ID", "XDG_SESSION_TYPE",
     ]
     env = {key: os.environ[key] for key in allowed_keys if key in os.environ}
     env['XDG_RUNTIME_DIR'] = f"/run/user/{uid}"
@@ -60,6 +61,12 @@ async def service_script_exec(command, args=None):
         decky.logger.error(f"Error executing service script: {e}")
 
 
+async def async_wait(evt: asyncio.Event, timeout: float) -> bool:
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(evt.wait(), timeout)
+    return evt.is_set()
+
+
 class Plugin:
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
@@ -69,14 +76,14 @@ class Plugin:
         await self.init_config()
 
         # Monitor running apps to auto-assign the correct audio sink
-        self.running = True
+        self.stop_event = asyncio.Event()
 
         async def check_state_loop():
             decky.logger.info("Starting service to manage app sink association...")
-            while self.running:
+            while not self.stop_event.is_set():
                 try:
                     await self.check_state()
-                    await asyncio.sleep(30)
+                    await async_wait(self.stop_event, 30)
                 except asyncio.CancelledError:
                     # This can happen during shutdown, just ignore
                     pass
@@ -85,12 +92,13 @@ class Plugin:
 
         async def handle_interrupt(int_sig):
             decky.logger.info(f"Received signal {int_sig}. Stopping check_state_loop.")
-            self.running = False
+            self.stop_event.set()
             # Give the loop a little time to exit gracefully.
             await asyncio.sleep(1)
             tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
             [task.cancel() for task in tasks]
             await asyncio.gather(*tasks, return_exceptions=True)
+            decky.logger.info(f"Stopped check_state_loop.")
             self.loop.stop()
 
         # Set up signal handler for Ctrl+C (SIGINT) and other signals you want to catch
