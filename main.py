@@ -268,7 +268,7 @@ class Plugin:
         """Installs the specified HRIR file."""
         decky.logger.info("Installing %s", selected_hrir_path)
         try:
-            os.makedirs(os.path.dirname(pipewire_config_path), exist_ok=True)
+            os.makedirs(os.path.dirname(hrir_dest_path), exist_ok=True)
             shutil.copy2(selected_hrir_path, hrir_dest_path)
             os.chmod(hrir_dest_path, 0o644)
             decky.logger.info("Copied %s to %s", selected_hrir_path, hrir_dest_path)
