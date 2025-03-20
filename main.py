@@ -1,11 +1,11 @@
 import asyncio
 import asyncio.subprocess
 import contextlib
+import datetime
 import json
 import os
 import re
 import shutil
-import signal
 
 # The decky plugin module is located at decky-loader/plugin
 # For easy intellisense checkout the decky-loader code repo
@@ -14,6 +14,7 @@ import decky
 from settings import SettingsManager
 
 # Get environment variable
+logDir = os.environ["DECKY_PLUGIN_LOG_DIR"]
 settingsDir = os.environ["DECKY_PLUGIN_SETTINGS_DIR"]
 settings = SettingsManager(name="settings", settings_directory=settingsDir)
 settings.read()
@@ -96,15 +97,22 @@ class Plugin:
                 await self._background_task
             except asyncio.CancelledError:
                 decky.logger.info("Background task cancelled successfully")
-        decky.logger.info("Goodnight World!")
+        decky.logger.info("Plugin unloaded")
 
     # Function called after `_unload` during uninstall, utilize this to clean up processes and other remnants of your
     # plugin that may remain on the system
     async def _uninstall(self):
-        decky.logger.info("Uninstalling service")
-        await service_script_exec("uninstall")
+        decky.logger.info("Uninstalling service as background task")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
+        uninstall_log_path = os.path.join(logDir, f"uninstall_{timestamp}.log")
+        service_script = os.path.join(script_directory, "service.sh")
+        cmd = f"{service_script} uninstall &> {uninstall_log_path}"
+        os.spawnle(os.P_NOWAIT, "/bin/sh", "sh", "-c", cmd, subprocess_exec_env())
+        # Clean up the HRIR file if it exists.
+        decky.logger.info("Removing '%s' if it exists", hrir_dest_path)
         if os.path.exists(hrir_dest_path):
             os.remove(hrir_dest_path)
+        decky.logger.info("Plugin uninstalled")
 
     # Migrations that should be performed before entering `_main()`.
     async def _migration(self):
