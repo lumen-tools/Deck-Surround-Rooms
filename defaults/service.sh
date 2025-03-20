@@ -333,6 +333,11 @@ speaker_test() {
 
 install_service() {
     echo "Installing service: ${service_name:?}"
+    echo "  - Creating directory: '${HOME:?}/.config/pipewire'"
+    mkdir -pv "${HOME:?}/.config/pipewire"
+    echo "  - Ensure directory and all contents is RW by the user"
+    chmod 755 "${HOME:?}/.config/pipewire"
+    chmod u+rw -R "${HOME:?}/.config/pipewire"
     echo "  - Installing systemd unit: ${service_file:?}"
     echo "${service_config:?}" > "${service_file:?}"
     echo "  - Exec daemon-reload"
