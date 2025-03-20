@@ -68,6 +68,10 @@ async def async_wait(evt: asyncio.Event, timeout: float) -> bool:
 
 
 class Plugin:
+    def __init__(self):
+        self._background_task = None
+        self.stop_event = asyncio.Event()
+
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
         self.loop = asyncio.get_event_loop()
@@ -75,49 +79,24 @@ class Plugin:
         # Install initial files
         await self.init_config()
 
-        # Monitor running apps to auto-assign the correct audio sink
-        self.stop_event = asyncio.Event()
-
-        async def check_state_loop():
-            decky.logger.info("Starting service to manage app sink association...")
-            while not self.stop_event.is_set():
-                try:
-                    await self.check_state()
-                    await async_wait(self.stop_event, 30)
-                except asyncio.CancelledError:
-                    # This can happen during shutdown, just ignore
-                    pass
-                except Exception as e:
-                    decky.logger.error(f"Error in check_state_loop: {e}")
-
-        async def handle_interrupt(int_sig):
-            decky.logger.info(f"Received signal {int_sig}. Stopping check_state_loop.")
-            self.stop_event.set()
-            # Give the loop a little time to exit gracefully.
-            await asyncio.sleep(1)
-            tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
-            [task.cancel() for task in tasks]
-            await asyncio.gather(*tasks, return_exceptions=True)
-            decky.logger.info(f"Stopped check_state_loop.")
-            self.loop.stop()
-
-        # Set up signal handler for Ctrl+C (SIGINT) and other signals you want to catch
-        for signal_to_handle in (signal.SIGINT, signal.SIGTERM):
-            self.loop.add_signal_handler(signal_to_handle,
-                                         lambda sig=signal_to_handle: asyncio.create_task(handle_interrupt(sig)))
-
-        try:
-            await check_state_loop()
-        except asyncio.CancelledError:
-            decky.logger.info("check_state_loop CancelledError.")
-        finally:
-            decky.logger.info("check_state_loop finished.")
+        self.stop_event.clear()
+        # Start the background task.
+        self._background_task = self.loop.create_task(self.background_tasks())
+        decky.logger.info("Plugin main started")
 
     # Function called first during the unload process, utilize this to handle your plugin being stopped, but not
     # completely removed
     async def _unload(self):
+        decky.logger.info("Unloading plugin: stopping background tasks...")
+        # Signal the background task to exit.
+        self.stop_event.set()
+        if self._background_task:
+            self._background_task.cancel()
+            try:
+                await self._background_task
+            except asyncio.CancelledError:
+                decky.logger.info("Background task cancelled successfully")
         decky.logger.info("Goodnight World!")
-        pass
 
     # Function called after `_unload` during uninstall, utilize this to clean up processes and other remnants of your
     # plugin that may remain on the system
@@ -146,6 +125,25 @@ class Plugin:
         decky.migrate_runtime(
             os.path.join(decky.DECKY_HOME, "template"),
             os.path.join(decky.DECKY_USER_HOME, ".local", "share", "decky-template"))
+
+    async def background_tasks(self):
+        decky.logger.info("Background tasks started")
+        while not self.stop_event.is_set():
+            try:
+                decky.logger.info("Running task to ensure applications are assigned to their configured sinks")
+                await self.check_state()
+                # Wait for 30 seconds, or exit early if stop_event is set.
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    # Timeout occurred: continue loop.
+                    pass
+            except asyncio.CancelledError:
+                decky.logger.info("Background task cancelled")
+                break
+            except Exception as e:
+                decky.logger.error(f"[background_tasks error]: {e}")
+        decky.logger.info("Background tasks stopped")
 
     async def init_config(self):
         if not os.path.exists(os.path.join(pipewire_config_path, "hrir.wav")):
@@ -542,7 +540,6 @@ class Plugin:
         target_sink = None
         for sink in sinks:
             # Look for the sink named "input.virtual-surround-sound"
-            print(sink)
             if sink.get("name") == "input.virtual-surround-sound":
                 target_sink = sink
                 break
@@ -581,7 +578,7 @@ class Plugin:
                 volume_args.append(f"100%")
 
         if not volume_args:
-            decky.logger.info("No matching channels found in mixer profile for sink channel map")
+            decky.logger.error("No matching channels found in mixer profile for sink channel map")
             return False
 
         # Execute pactl to set the per-channel volume.
@@ -597,7 +594,7 @@ class Plugin:
             if process.returncode != 0:
                 decky.logger.error("Failed to set mixer profile: " + stderr.decode())
                 return False
-            decky.logger.info(f"Mixer profile applied on sink {sink_index} with volumes: {volume_args}")
+            decky.logger.debug(f"Mixer profile applied on sink {sink_index} with volumes: {volume_args}")
             return True
         except Exception as e:
             decky.logger.error(f"Error setting mixer profile: {e}")
