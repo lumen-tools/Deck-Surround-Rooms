@@ -160,6 +160,24 @@ class Plugin:
         decky.logger.info("Installing service")
         await service_script_exec("install")
 
+    async def get_surround_sink_default(self):
+        """Checks if the Virtual Surround Sound sink should be the default"""
+        return settings.getSetting("surround_sink_default", True)
+
+    async def enable_surround_sink_default(self):
+        """Sets the Virtual Surround Sound sink as the default"""
+        decky.logger.info("Enabling Virtual Surround Sound as the default sink")
+        settings.setSetting("surround_sink_default", True)
+        await self.check_state()
+        return True
+
+    async def disable_surround_sink_default(self):
+        """Disables the Virtual Surround Sound sink as the default"""
+        decky.logger.info("Removing Virtual Surround Sound as the default sink")
+        settings.setSetting("surround_sink_default", False)
+        await self.check_state()
+        return True
+
     async def get_enabled_apps_list(self):
         """Reads the current list of enabled apps"""
         return settings.getSetting("enabled_apps", [])
@@ -192,7 +210,7 @@ class Plugin:
 
     async def check_state(self):
         settings.read()
-        enabled_apps = settings.getSetting("enabled_apps", [])
+        enabled_apps = await self.get_enabled_apps_list()
         sinks = await self.get_sinks()
         sink_inputs = await self.get_sink_inputs()
 
@@ -202,6 +220,13 @@ class Plugin:
         if not virtual_surround_sink or not virtual_sink:
             decky.logger.error("Required sinks not found. Virtual Surround Sound or Virtual Sink is missing.")
             return
+
+        # Ensure that the "Virtual Surround Sound" is default
+        use_surround_sink_as_default = await self.get_surround_sink_default()
+        if use_surround_sink_as_default:
+            await self.set_default_sink(virtual_surround_sink['object_id'])
+        else:
+            await self.set_default_sink(virtual_sink['object_id'])
 
         # Loop over each sink input and check its assignment.
         for sink_input in sink_inputs:
@@ -369,6 +394,11 @@ class Plugin:
                     channels = chmap_match.group(1).split(',')
                     current_sink['channel_map'] = [ch.strip() for ch in channels]
                     continue
+
+                # Capture the object ID that can be used by wpctl
+                object_id_match = re.match(r'\s*object\.id\s*=\s*"(\d+)"', line)
+                if object_id_match:
+                    current_sink['object_id'] = int(object_id_match.group(1))
             if current_sink is not None:
                 sinks.append(current_sink)
         except FileNotFoundError:
@@ -492,6 +522,24 @@ class Plugin:
             decky.logger.error(f"Error getting sink inputs: {e}")
             return []
         return sink_inputs
+
+    async def set_default_sink(self, sink_input_index: str):
+        """Moves the sink output for the given app"""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "wpctl", 'set-default', str(sink_input_index),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=subprocess_exec_env()
+            )
+            await process.communicate()
+            return process.returncode == 0
+        except FileNotFoundError:
+            decky.logger.warning("wpctl not found.")
+            return False
+        except Exception as e:
+            decky.logger.error(f"Error setting default input sink: {e}")
+            return False
 
     async def set_sink_for_application(self, sink_input_index: str, target_sink_index: str):
         """Moves the sink output for the given app"""

@@ -3,7 +3,7 @@ import {
   PanelSectionRow,
   DialogButton,
   Focusable,
-  Dropdown, Navigation, Router,
+  Dropdown, Navigation, Router, ToggleField,
 } from '@decky/ui'
 import { useState, useEffect } from 'react'
 import { MdArrowBack, MdSurroundSound, MdWeb } from 'react-icons/md'
@@ -13,6 +13,7 @@ import { getPluginConfig, setPluginConfig } from '../../constants'
 import { call } from '@decky/api'
 import { PanelSocialButton } from '../elements/SocialButton'
 import { VscSurroundWith } from 'react-icons/vsc'
+import { popupNotesDialog } from '../elements/NotesDialog'
 
 interface PluginConfigViewProps {
   onGoBack: () => void;
@@ -22,6 +23,16 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
   const [isLoading, setIsLoading] = useState(false)
   const [currentConfig, setCurrentConfig] = useState(() => getPluginConfig())
   const [hrirFileList, setHrirFileList] = useState<HrirFile[]>([])
+  const [surroundSinkDefaultConfig, setSurroundSinkDefaultConfig] = useState<boolean>(false)
+
+  const readBackendConfig = async () => {
+    const surroundSinkDefault = await call<[], boolean[]>('get_surround_sink_default')
+    if (surroundSinkDefault) {
+      setSurroundSinkDefaultConfig(true)
+    } else {
+      setSurroundSinkDefaultConfig(false)
+    }
+  }
 
   const updateHrirFileListList = async () => {
     setIsLoading(true)
@@ -60,6 +71,28 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
     }
   }
 
+  const handleEnableSurroundDefaultSink = async (enabled: boolean) => {
+    console.log(`[decky-virtual-surround-sound:PluginConfigView] Configure Virtual Surround Sink as default: ${enabled}`)
+    if (!currentConfig?.notesAcknowledgedV1) {
+      console.log(`[decky-virtual-surround-sound:PluginConfigView] Divert to first display warnings dialog.`)
+      popupNotesDialog(() => {
+        console.log(`[decky-virtual-surround-sound:PluginConfigView] Reloading settings.`)
+        setCurrentConfig(getPluginConfig())
+      })
+      return
+    }
+    try {
+      if (enabled) {
+        await call<[], boolean>('enable_surround_sink_default')
+      } else {
+        await call<[], boolean>('disable_surround_sink_default')
+      }
+      await readBackendConfig()
+    } catch (error) {
+      console.error(`[decky-virtual-surround-sound:PluginConfigView] Error setting default sink as ${enabled}:`, error)
+    }
+  }
+
   const runSoundTest = async (sink: string) => {
     console.info(`[decky-virtual-surround-sound:PluginConfigView] Exec sound test`)
     await call<[original: string]>('run_sound_test', sink)
@@ -67,6 +100,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
 
   useEffect(() => {
     console.log(`[decky-virtual-surround-sound:PluginConfigView] Mounted`)
+    readBackendConfig()
     updateHrirFileListList()
   }, [])
 
@@ -96,6 +130,32 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
         <PanelSection spinner title="Fetching settings..." />
       ) : (
         <div>
+          <PanelSection title="Configure Default Audio Sink">
+            <PanelSectionRow>
+              <ToggleField
+                label="Use Virtual Surround Sound as Default Output"
+                checked={surroundSinkDefaultConfig}
+                onChange={(e) => {
+                  handleEnableSurroundDefaultSink(e)
+                }}
+                disabled={(surroundSinkDefaultConfig === null)}
+              />
+              <p style={{ fontSize: '0.7rem', marginBottom: '10px' }}>
+                Some applications, particularly games and media players, query the system's default audio sink at launch
+                to determine the channel layout (e.g., stereo or 7.1 surround).
+                <br />
+                If the virtual surround sound sink is not set as the default when these apps start, they will typically
+                detect only a stereo output and configure their audio accordingly.
+                <br />
+                Changing the sink afterward won't cause the application to re-query PipeWire for updated channel
+                capabilities, meaning the app will continue outputting 2-channel audio even if moved to a multichannel
+                sink.
+                <br />
+                To ensure proper surround sound, the virtual surround sink must be the default before launching the
+                application.
+              </p>
+            </PanelSectionRow>
+          </PanelSection>
           <PanelSection title="Select a HRIR file for filter">
             <PanelSectionRow>
               <Dropdown

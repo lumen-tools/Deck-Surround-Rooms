@@ -19,6 +19,64 @@ if [[ -n "${VIRTUAL_SURROUND_SINK_SUFFIX:-}" ]]; then
     virtual_surround_sink_description="Virtual Surround Sound (${VIRTUAL_SURROUND_SINK_SUFFIX:-})"
 fi
 virtual_sink_name="virtual-sink"
+# 2
+dummy_virtual_sink_2=$(
+    cat <<EOF
+context.modules = [
+    { 
+        name = "libpipewire-module-filter-chain"
+        args = {
+            node.name = "virtual-sink"
+            node.description = "Virtual Sink"
+            media.name = "Virtual Sink"
+            filter.graph = {
+                nodes = [
+                    {
+                        name   = copyIL
+                        type   = builtin
+                        label  = copy
+                    }
+                    {
+                        name   = copyOL
+                        type   = builtin
+                        label  = copy
+                    }
+                    {
+                        name   = copyIR
+                        type   = builtin
+                        label  = copy
+                    }
+                    {
+                        name   = copyOR
+                        type   = builtin
+                        label  = copy
+                    }
+                ]
+                links = [
+                    { output = "copyIL:Out" input = "copyOL:In" }
+                    { output = "copyIR:Out" input = "copyOR:In" }
+                ]
+                inputs  = [ "copyIL:In" "copyIR:In" ]
+                outputs = [ "copyOL:Out" "copyOR:Out" ]
+            }
+            capture.props = {
+                node.name         = "input.virtual-sink"
+                media.class       = Audio/Sink
+                audio.channels    = 2
+                audio.position    = [ FL FR ]
+            }
+            playback.props = {
+                node.name         = "output.virtual-sink"
+                node.passive      = true
+                audio.channels    = 2
+                audio.position    = [ FL FR ]
+            }
+        }
+    }
+]
+EOF
+)
+
 # 7.1
 args_8='{
     "audio.channels": 8,
@@ -35,22 +93,22 @@ args_8='{
             { "type": "builtin", "label": "copy", "name": "copySL" },
             { "type": "builtin", "label": "copy", "name": "copySR" },
             { "type": "builtin", "label": "copy", "name": "copyLFE" },
-            { "type": "builtin", "label": "convolver", "name": "convFL_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 0 } },
-            { "type": "builtin", "label": "convolver", "name": "convFL_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 1 } },
-            { "type": "builtin", "label": "convolver", "name": "convSL_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 2 } },
-            { "type": "builtin", "label": "convolver", "name": "convSL_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 3 } },
-            { "type": "builtin", "label": "convolver", "name": "convRL_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 4 } },
-            { "type": "builtin", "label": "convolver", "name": "convRL_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 5 } },
-            { "type": "builtin", "label": "convolver", "name": "convFC_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 6 } },
-            { "type": "builtin", "label": "convolver", "name": "convFR_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 7 } },
-            { "type": "builtin", "label": "convolver", "name": "convFR_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 8 } },
-            { "type": "builtin", "label": "convolver", "name": "convSR_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 9 } },
-            { "type": "builtin", "label": "convolver", "name": "convSR_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 10 } },
-            { "type": "builtin", "label": "convolver", "name": "convRR_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 11 } },
-            { "type": "builtin", "label": "convolver", "name": "convRR_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 12 } },
-            { "type": "builtin", "label": "convolver", "name": "convFC_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 13 } },
-            { "type": "builtin", "label": "convolver", "name": "convLFE_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 6 } },
-            { "type": "builtin", "label": "convolver", "name": "convLFE_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 13 } },
+            { "type": "builtin", "label": "convolver", "name": "convFL_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 0 } },
+            { "type": "builtin", "label": "convolver", "name": "convFL_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 1 } },
+            { "type": "builtin", "label": "convolver", "name": "convSL_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 2 } },
+            { "type": "builtin", "label": "convolver", "name": "convSL_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 3 } },
+            { "type": "builtin", "label": "convolver", "name": "convRL_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 4 } },
+            { "type": "builtin", "label": "convolver", "name": "convRL_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 5 } },
+            { "type": "builtin", "label": "convolver", "name": "convFC_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 6 } },
+            { "type": "builtin", "label": "convolver", "name": "convFR_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 7 } },
+            { "type": "builtin", "label": "convolver", "name": "convFR_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 8 } },
+            { "type": "builtin", "label": "convolver", "name": "convSR_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 9 } },
+            { "type": "builtin", "label": "convolver", "name": "convSR_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 10 } },
+            { "type": "builtin", "label": "convolver", "name": "convRR_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 11 } },
+            { "type": "builtin", "label": "convolver", "name": "convRR_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 12 } },
+            { "type": "builtin", "label": "convolver", "name": "convFC_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 13 } },
+            { "type": "builtin", "label": "convolver", "name": "convLFE_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 6 } },
+            { "type": "builtin", "label": "convolver", "name": "convLFE_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 13 } },
             { "type": "builtin", "label": "mixer", "name": "mixL" },
             { "type": "builtin", "label": "mixer", "name": "mixR" }
         ],
@@ -113,16 +171,16 @@ args_6='{
     "node.description": "'${virtual_surround_sink_description:?}'",
     filter.graph = {
         "nodes": [
-            { "type": "builtin", "label": "convolver", "name": "convFL_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 0 } },
-            { "type": "builtin", "label": "convolver", "name": "convFL_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 1 } },
-            { "type": "builtin", "label": "convolver", "name": "convFR_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 1 } },
-            { "type": "builtin", "label": "convolver", "name": "convFR_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 0 } },
-            { "type": "builtin", "label": "convolver", "name": "convFC", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 2 } },
-            { "type": "builtin", "label": "convolver", "name": "convLFE", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 3 } },
-            { "type": "builtin", "label": "convolver", "name": "convSL_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 4 } },
-            { "type": "builtin", "label": "convolver", "name": "convSL_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 5 } },
-            { "type": "builtin", "label": "convolver", "name": "convSR_L", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 5 } },
-            { "type": "builtin", "label": "convolver", "name": "convSR_R", "config": { "filename": "/home/deck/.config/pipewire/hrir.wav", "channel": 4 } },
+            { "type": "builtin", "label": "convolver", "name": "convFL_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 0 } },
+            { "type": "builtin", "label": "convolver", "name": "convFL_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 1 } },
+            { "type": "builtin", "label": "convolver", "name": "convFR_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 1 } },
+            { "type": "builtin", "label": "convolver", "name": "convFR_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 0 } },
+            { "type": "builtin", "label": "convolver", "name": "convFC", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 2 } },
+            { "type": "builtin", "label": "convolver", "name": "convLFE", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 3 } },
+            { "type": "builtin", "label": "convolver", "name": "convSL_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 4 } },
+            { "type": "builtin", "label": "convolver", "name": "convSL_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 5 } },
+            { "type": "builtin", "label": "convolver", "name": "convSR_L", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 5 } },
+            { "type": "builtin", "label": "convolver", "name": "convSR_R", "config": { "filename": "'${HOME:?}'/.config/pipewire/hrir.wav", "channel": 4 } },
             { "type": "builtin", "label": "mixer", "name": "mixL" },
             { "type": "builtin", "label": "mixer", "name": "mixR" },
             { "type": "builtin", "label": "copy", "name": "copyFL" },
@@ -169,7 +227,7 @@ args_6='{
         "stream.dont-remix": true
     }
 }'
-# 
+#
 #             { "output": "convFC:Out",   "input": "mixL:In 3", "gain": "+3dB" }
 #             { "output": "convLFE:Out",  "input": "mixL:In 4" }
 #             { "output": "convSL_L:Out", "input": "mixL:In 5" }
@@ -177,7 +235,7 @@ args_6='{
 #             { "output": "convFL_R:Out", "input": "mixR:In 1" }
 #             { "output": "convFR_R:Out", "input": "mixR:In 2" }
 #             { "output": "convFC:Out",   "input": "mixR:In 3", "gain": "+3dB" }
-#             
+#
 # Check channel counthrir.wav files with command:
 #   > ffprobe -v error -select_streams a:0 -show_entries stream=channels -of default=noprint_wrappers=1:nokey=1 /home/deck/.config/pipewire/hrir.wav
 # Or get all info
@@ -196,7 +254,8 @@ fi
 pid_file="${XDG_RUNTIME_DIR:?}/${virtual_surround_sink_name:?}.pid"
 service_name="${virtual_surround_sink_name:?}.service"
 service_file="${HOME:?}/.config/systemd/user/${service_name:?}"
-service_config=$(cat <<EOF
+service_config=$(
+    cat <<EOF
 [Unit]
 Description=${virtual_surround_sink_description:?}
 Requires=pipewire.service
@@ -233,25 +292,25 @@ run() {
     local channels="8"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --channels=*)
-                channels="${1#*=}"
-                ;;
-            --channels)
-                shift
-                channels="$1"
-                ;;
-            *)
-                echo "Invalid arg: $1"
-                print_usage_and_exit 1
-                ;;
+        --channels=*)
+            channels="${1#*=}"
+            ;;
+        --channels)
+            shift
+            channels="$1"
+            ;;
+        *)
+            echo "Invalid arg: $1"
+            print_usage_and_exit 1
+            ;;
         esac
         shift
     done
 
     # Configure the module args to use
     if [[ "$channels" != "6" && "$channels" != "8" ]]; then
-         echo "Invalid channels value: $channels. Must be 6 or 8."
-         exit 1
+        echo "Invalid channels value: $channels. Must be 6 or 8."
+        exit 1
     fi
     local module_args="${args_8}"
     if [[ "$channels" != "8" ]]; then
@@ -263,7 +322,7 @@ run() {
         rm -f "${pid_file:?}"
         sleep 0.2
     fi
-    if pw-cli ls Node | grep "node.name" | grep -q "input.${virtual_surround_sink_name:?}" &> /dev/null; then
+    if pw-cli ls Node | grep "node.name" | grep -q "input.${virtual_surround_sink_name:?}" &>/dev/null; then
         echo "ERROR! A node with the name '${virtual_surround_sink_name:?}' already exists. Exit!"
         exit 1
     fi
@@ -271,12 +330,17 @@ run() {
     echo "Creating and loading module ${module_name:?} with ${channels:?} channels - ${virtual_surround_sink_name:?}"
     pw-cli -m load-module ${module_name:?} ${module_args:?} &
     pw_cli_pid=$!
-    echo ${pw_cli_pid:?} > ${pid_file:?}
+    echo ${pw_cli_pid:?} >${pid_file:?}
     sleep 1 # <- sleep for a second to ensure everything is loaded before linking
+
+    # # Set this as the default sink
+    # wpctl set-default $(wpctl status | grep 'input.virtual-surround-sound' | grep 'Audio/Sink' | sed 's/[^0-9]*\([0-9]\+\)\..*/\1/')
+    # wpctl set-default $(wpctl status | grep 'Audio/Sink' | grep -v 'virtual' | head -n1 | sed 's/[^0-9]*\([0-9]\+\)\..*/\1/')
+
 
     ## # Configure loaded module
     ## #   NOTE:
-    ## #       The avaiable outputs and inputs are found by running 'pw-link -o' and 'pw-link -i'
+    ## #       The available outputs and inputs are found by running 'pw-link -o' and 'pw-link -i'
     ## echo "Link outputs of module ${module_name:?} - ${virtual_surround_sink_name:?} to module ${virtual_sink_name:?}"
     ## virtual_surround_sink_outputs_prefix="output.${virtual_surround_sink_name:?}:output_"
     ## virtual_sink_inputs_prefix="input.${virtual_sink_name:?}:playback_"
@@ -306,40 +370,76 @@ speaker_test() {
     local pulse_sink="${virtual_surround_sink_name:?}"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --sink=*)
-                pulse_sink="${1#*=}"
-                ;;
-            --sink)
-                shift
-                pulse_sink="$1"
-                ;;
-            *)
-                echo "Invalid arg: $1"
-                print_usage_and_exit 1
-                ;;
+        --sink=*)
+            pulse_sink="${1#*=}"
+            ;;
+        --sink)
+            shift
+            pulse_sink="$1"
+            ;;
+        *)
+            echo "Invalid arg: $1"
+            print_usage_and_exit 1
+            ;;
         esac
         shift
     done
     if [[ "$pulse_sink" != "${virtual_surround_sink_name:?}" && "$pulse_sink" != "${virtual_sink_name:?}" ]]; then
-         echo "Select sink: $pulse_sink. Must be ${virtual_surround_sink_name:?} or ${virtual_sink_name:?}."
-         exit 1
+        echo "Select sink: $pulse_sink. Must be ${virtual_surround_sink_name:?} or ${virtual_sink_name:?}."
+        exit 1
     fi
 
     for i in {0..6}; do
-        speaker-test -D "pulse:input.${pulse_sink:?}" -c 8 -t wave -s $((i+1))
+        speaker-test -D "pulse:input.${pulse_sink:?}" -c 8 -t wave -s $((i + 1))
     done
     speaker-test -D "pulse:input.${pulse_sink:?}" -c 8 -t sine -f 50 -s 8
 }
 
 install_service() {
     echo "Installing service: ${service_name:?}"
+    local install_dummy_virtual_sink="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --install-dummy-virtual-sink)
+            install_dummy_virtual_sink="true"
+            ;;
+        *)
+            echo "Invalid arg: $1"
+            print_usage_and_exit 1
+            ;;
+        esac
+        shift
+    done
+    if [[ "${install_dummy_virtual_sink:?}" = "true" ]]; then
+        # For now, only install this if the virtual sink exists. If it does not, then we will ignore it
+        echo "  - Creating directory: '${HOME:?}/.config/pipewire/pipewire.conf.d'"
+        mkdir -p \
+            "${HOME:?}/.config/pipewire/tmp" \
+            "${HOME:?}/.config/pipewire/pipewire.conf.d"
+        # Only install and restart pipewire if the config has changed
+        echo "${dummy_virtual_sink_2:?}" >"${HOME:?}/.config/pipewire/tmp/virtual-sink.conf"
+        local dummy_virtual_sink_modified="false"
+        if [[ ! -f "${HOME:?}/.config/pipewire/pipewire.conf.d/virtual-sink.conf" ]]; then
+            dummy_virtual_sink_modified="true"
+        elif ! cmp -s "${HOME:?}/.config/pipewire/tmp/virtual-sink.conf" "${HOME:?}/.config/pipewire/pipewire.conf.d/virtual-sink.conf"; then
+            dummy_virtual_sink_modified="true"
+        fi
+        if [[ "${dummy_virtual_sink_modified:-}" = "true" ]]; then
+            echo "  - Installing dummy virtual-sink.conf"
+            cp -f "${HOME:?}/.config/pipewire/tmp/virtual-sink.conf" "${HOME:?}/.config/pipewire/pipewire.conf.d/virtual-sink.conf"
+            echo "  - Restarting wireplumber pipewire pipewire-pulse systemd services"
+            systemctl --user restart wireplumber pipewire pipewire-pulse
+        else
+            echo "  - The dummy virtual-sink.conf has not changed"
+        fi
+    fi
     echo "  - Creating directory: '${HOME:?}/.config/pipewire'"
-    mkdir -pv "${HOME:?}/.config/pipewire"
+    mkdir -p "${HOME:?}/.config/pipewire"
     echo "  - Ensure directory and all contents is RW by the user"
     chmod 755 "${HOME:?}/.config/pipewire"
     chmod u+rw -R "${HOME:?}/.config/pipewire"
     echo "  - Installing systemd unit: ${service_file:?}"
-    echo "${service_config:?}" > "${service_file:?}"
+    echo "${service_config:?}" >"${service_file:?}"
     echo "  - Exec daemon-reload"
     systemctl --user daemon-reload
     echo "  - Enabling systemd unit"
@@ -362,6 +462,8 @@ uninstall_service() {
         rm -f "${service_file}"
         echo "  - Exec daemon-reload"
         systemctl --user daemon-reload
+        echo "  - Removing custom virtual-sink.conf"
+        rm -f "${HOME:?}/.config/pipewire/pipewire.conf.d/virtual-sink.conf"
         echo "Systemd service stopped and uninstalled."
     else
         echo "Systemd service has not been installed. Run this script with the 'install' command to install it."
@@ -403,7 +505,7 @@ fi
 
 # Parse command line arguments
 if [[ $# -eq 0 ]]; then
-  print_usage_and_exit 1
+    print_usage_and_exit 1
 fi
 
 # The first parameter is the command.
@@ -411,29 +513,29 @@ cmd="$1"
 shift
 
 case "$cmd" in
-    "run")
-        run "$@"
-        ;;
-    "speaker-test")
-        speaker_test "$@"
-        ;;
-    "install")
-        install_service "$@"
-        ;;
-    "uninstall")
-        uninstall_service "$@"
-        ;;
-    "restart")
-        restart_service "$@"
-        ;;
-    "stop")
-        stop_service "$@"
-        ;;
-    "kill-all")
-        kill_all_running_instances "$@"
-        ;;
-    *)
-        echo "Invalid command: $cmd"
-        print_usage_and_exit 1
-        ;;
+"run")
+    run "$@"
+    ;;
+"speaker-test")
+    speaker_test "$@"
+    ;;
+"install")
+    install_service "$@"
+    ;;
+"uninstall")
+    uninstall_service "$@"
+    ;;
+"restart")
+    restart_service "$@"
+    ;;
+"stop")
+    stop_service "$@"
+    ;;
+"kill-all")
+    kill_all_running_instances "$@"
+    ;;
+*)
+    echo "Invalid command: $cmd"
+    print_usage_and_exit 1
+    ;;
 esac
