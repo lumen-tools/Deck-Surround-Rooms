@@ -240,11 +240,11 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <Field label="HRTF" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
+          <Field label="HRIR" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
             <Dropdown
               rgOptions={hrirFiles.map((file) => ({ label: file.label, data: file.path }))}
               selectedOption={activeHrir?.path}
-              strDefaultLabel="Select HRTF"
+              strDefaultLabel="Select HRIR"
               disabled={isApplyingHrir || hrirFiles.length === 0}
               onChange={(option) => selectHrir(option.data)}
             />

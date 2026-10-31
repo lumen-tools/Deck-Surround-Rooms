@@ -204,7 +204,7 @@ def hrir_display_name(path: str) -> str:
     # Custom files: keep printable characters only and make the file name readable.
     readable = "".join(c for c in stem if c.isprintable() and c != "\ufffd")
     readable = re.sub(r"[_\s]+", " ", readable).strip()
-    return readable or "Custom HRTF"
+    return readable or "Custom HRIR"
 
 
 class UnsupportedHrirError(Exception):
