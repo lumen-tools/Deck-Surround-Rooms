@@ -1203,9 +1203,11 @@ class Plugin:
         # pw-record writes through a buffered stream: in a pipe the few bytes per second would only
         # arrive every few seconds. stdbuf makes the output unbuffered.
         prefix = ["stdbuf", "-o0"] if shutil.which("stdbuf") else []
+        # Newer pw-record versions write an AU file (header, big endian) to stdout unless --raw is given.
+        raw_args = ["--raw"] if await self._pw_record_supports_raw() else []
         try:
             process = await asyncio.create_subprocess_exec(
-                *prefix, "pw-record",
+                *prefix, "pw-record", *raw_args,
                 # Not linked by the session manager: on SteamOS it connected the channels in a different
                 # order (stereo showed up as SL/SR). The ports are linked by name below instead.
                 "--target", "0",
@@ -1232,6 +1234,22 @@ class Plugin:
         decky.logger.info("Channel meter started (pid %s) on '%s'", process.pid, device_name)
         self._meter_task = asyncio.get_event_loop().create_task(self._channel_meter_reader(process, device_name))
 
+    async def _pw_record_supports_raw(self) -> bool:
+        cached = getattr(self, "_pw_record_raw", None)
+        if cached is not None:
+            return cached
+        supported = False
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "pw-record", "--help", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                env=subprocess_exec_env())
+            out, _ = await proc.communicate()
+            supported = b"--raw" in out
+        except Exception:
+            pass
+        self._pw_record_raw = supported
+        return supported
+
     async def _link_channel_meter(self, device_name: str) -> bool:
         """Links every monitor port of the surround device to the meter input of the same channel."""
         env = subprocess_exec_env()
@@ -1257,10 +1275,48 @@ class Plugin:
                 ok = False
         return ok
 
+    @staticmethod
+    def _meter_stream_header(head: bytes) -> tuple[int, str] | None:
+        """
+        pw-record writes through libsndfile. Depending on the PipeWire version, "-" (stdout) is raw
+        float data or a sound file with a header (AU, big endian, or WAV). Returns (header size,
+        byte order) or None if more bytes are needed to decide.
+        """
+        import struct
+        if len(head) < 4:
+            return None
+        magic = head[:4]
+        if magic in (b".snd", b"dns."):  # AU, big or little endian
+            if len(head) < 8:
+                return None
+            order = ">" if magic == b".snd" else "<"
+            return struct.unpack(order + "I", head[4:8])[0], order
+        if magic in (b"RIFF", b"RF64"):
+            pos = 12
+            while pos + 8 <= len(head):
+                chunk_id = head[pos:pos + 4]
+                size = struct.unpack("<I", head[pos + 4:pos + 8])[0]
+                if chunk_id == b"data":
+                    return pos + 8, "<"
+                if size == 0xFFFFFFFF:
+                    size = 0
+                pos += 8 + size + (size & 1)
+            return None if len(head) < 4096 else (len(head), "<")
+        if magic == b"FORM":
+            idx = head.find(b"SSND")
+            if idx < 0:
+                return None if len(head) < 4096 else (len(head), ">")
+            if len(head) < idx + 16:
+                return None
+            offset = struct.unpack(">I", head[idx + 8:idx + 12])[0]
+            return idx + 16 + offset, ">"
+        return 0, "<"
+
     async def _channel_meter_reader(self, process, device_name: str):
         import struct
-        frame_size = 4 * len(self.METER_CHANNELS)
-        fmt = "<" + "f" * len(self.METER_CHANNELS)
+        n_ch = len(self.METER_CHANNELS)
+        frame_size = 4 * n_ch
+        fmt = None
         buffer = b""
         silent_reads = 0
         try:
@@ -1274,16 +1330,28 @@ class Plugin:
                     if silent_reads % 3 == 0:
                         await self._link_channel_meter(device_name)
                     continue
-                silent_reads = 0
                 if not chunk:
-                    break  # pw-record exited (e.g. the sink was removed)
+                    break  # pw-record exited
+                silent_reads = 0
                 buffer += chunk
+                if fmt is None:
+                    header = self._meter_stream_header(buffer)
+                    if header is None:
+                        continue
+                    skip, order = header
+                    if skip:
+                        decky.logger.info("Channel meter: stream has a %s byte header (%s endian)",
+                                          skip, "big" if order == ">" else "little")
+                    if len(buffer) < skip:
+                        continue
+                    buffer = buffer[skip:]
+                    fmt = order + "f" * n_ch
                 usable = len(buffer) - len(buffer) % frame_size
                 peaks = self._meter_peaks
                 for offset in range(0, usable, frame_size):
                     for i, value in enumerate(struct.unpack_from(fmt, buffer, offset)):
                         value = abs(value)
-                        if value > peaks[i]:
+                        if value > peaks[i] and value == value:  # ignore NaN
                             peaks[i] = value
                 buffer = buffer[usable:]
         except asyncio.CancelledError:

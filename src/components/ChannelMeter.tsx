@@ -1,19 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { call } from '@decky/api'
+import { CHANNEL_NAMES, CHANNEL_ORDER } from '../constants'
 
 // Order of the levels returned by the backend (get_channel_levels).
 const METER_CHANNELS = ['FL', 'FR', 'FC', 'LFE', 'RL', 'RR', 'SL', 'SR']
 // Displayed left to right in the ITU-R BS.775 / SMPTE 7.1 order with studio channel names.
-const DISPLAY: { code: string; label: string }[] = [
-  { code: 'FL', label: 'L' },
-  { code: 'FR', label: 'R' },
-  { code: 'FC', label: 'C' },
-  { code: 'LFE', label: 'LFE' },
-  { code: 'SL', label: 'Lss' },
-  { code: 'SR', label: 'Rss' },
-  { code: 'RL', label: 'Lrs' },
-  { code: 'RR', label: 'Rrs' },
-]
+const DISPLAY = CHANNEL_ORDER.map((code) => ({ code, label: CHANNEL_NAMES[code] }))
 const POLL_INTERVAL_MS = 100
 // Levels below -60 dBFS count as silence.
 const FLOOR_DB = -60

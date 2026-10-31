@@ -172,17 +172,23 @@ export const getCurrentProfileFromRunningApp = async (currentConfig: PluginConfi
   return profileName
 }
 
+// Studio channel names (ITU-R BS.775 / SMPTE) for the PipeWire channel codes.
+export const CHANNEL_NAMES: { [code: string]: string } = {
+  FL: 'L',
+  FR: 'R',
+  FC: 'C',
+  LFE: 'LFE',
+  SL: 'Lss',
+  SR: 'Rss',
+  RL: 'Lrs',
+  RR: 'Rrs',
+}
+
+// Channel order used in the UI (ITU-R BS.775 / SMPTE 7.1 order).
+export const CHANNEL_ORDER = ['FL', 'FR', 'FC', 'LFE', 'SL', 'SR', 'RL', 'RR']
+
 export const getMixerChannels = (channelCount: number = 8): Channel[] => {
-  const channels: Channel[] = [
-    { code: 'FL', label: 'Front Left' },
-    { code: 'FC', label: 'Front Center' },
-    { code: 'FR', label: 'Front Right' },
-    { code: 'SL', label: 'Side Left' },
-    { code: 'SR', label: 'Side Right' },
-    { code: 'LFE', label: 'Subwoofer (LFE)' },
-    { code: 'RL', label: 'Rear Left' },
-    { code: 'RR', label: 'Rear Right' },
-  ]
+  const channels: Channel[] = CHANNEL_ORDER.map((code) => ({ code, label: CHANNEL_NAMES[code] }))
   if (channelCount === 6) {
     // For a 5.1 setup (6 channels), only return these channels:
     return channels.filter((channel) =>

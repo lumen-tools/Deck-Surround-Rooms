@@ -18,6 +18,7 @@ import {
   FORK_REPO_URL,
   ORIGINAL_REPO_URL,
   setMixerProfileInBackend,
+  CHANNEL_NAMES,
 } from '../../constants'
 
 interface PluginConfigViewProps {
@@ -147,7 +148,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
                 style={channelButtonStyle(runningTest === `virtual-surround:${code}`)}
                 onClick={() => runSoundTest('virtual-surround', code)}
               >
-                {code}
+                {CHANNEL_NAMES[code]}
               </DialogButton>
             ) : (
               <div key={`listener-${index}`} style={{ textAlign: 'center', alignSelf: 'center', fontSize: '18px', opacity: 0.6 }}>🎧</div>
