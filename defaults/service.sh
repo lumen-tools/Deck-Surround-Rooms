@@ -564,7 +564,11 @@ link_virtual_surround_chain() {
     local surround_output_prefix="${filter_playback_node}:output_"
 
     local default_sink_name
-    default_sink_name=$(wpctl status | awk '/\*/ && /Audio\/Sink/ { sub(/.*\*\s*[0-9]+\.\s*/, ""); sub(/\s*\[.*/, ""); print; exit }' | sed 's/[[:space:]]*$//')
+    # The effective default sink (node name). Parsing the text output of "wpctl status" was unreliable:
+    # depending on the WirePlumber version and on whether a default is "configured" (the service clears
+    # it on start) it found nothing, the service exited and was restarted over and over, and the filter
+    # stayed unlinked (no sound) until a default happened to be set.
+    default_sink_name=$(pactl get-default-sink 2>/dev/null | head -n 1 | sed 's/[[:space:]]*$//')
     local virtual_filter="${virtual_surround_filter_sink_capture_node_name:?}"
     local virtual_device="${virtual_surround_device_sink_capture_node_name:?}"
 
@@ -756,8 +760,9 @@ run() {
             break
         fi
         if ! link_virtual_surround_chain "${channels:?}"; then
-            linking_failed=1
-            break
+            # Don't tear everything down (that also removes the sinks the apps are connected to);
+            # just try again on the next iteration.
+            echo "Linking failed, retrying"
         fi
     done
 
