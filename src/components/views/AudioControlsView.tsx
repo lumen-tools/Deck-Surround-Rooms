@@ -24,6 +24,7 @@ import {
   setMixerProfileInBackend,
   setPluginConfig,
 } from '../../constants'
+import ChannelMeter from '../ChannelMeter'
 
 interface AudioControlsViewProps {
   onChangePage: (page: PluginPage) => void
@@ -249,6 +250,11 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
               disabled={isApplyingHrir || hrirFiles.length === 0}
               onChange={(option) => selectHrir(option.data)}
             />
+          </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <Field label="Channels" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
+            <ChannelMeter />
           </Field>
         </PanelSectionRow>
       </PanelSection>

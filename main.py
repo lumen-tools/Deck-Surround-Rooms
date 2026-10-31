@@ -456,6 +456,8 @@ class Plugin:
         decky.logger.info("Unloading plugin: stopping background tasks...")
         # Signal the background task to exit.
         self.stop_event.set()
+        with contextlib.suppress(Exception):
+            await self._stop_channel_meter()
         if self._vss_guard_task:
             self._vss_guard_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -1159,6 +1161,116 @@ class Plugin:
     async def stop_sound_test(self) -> bool:
         await self._stop_running_sound_test()
         return True
+
+    # ---- Channel activity meter ----------------------------------------------------------------
+    #
+    # Shows which of the 8 input channels of the "Virtual Surround Sound" device currently carry
+    # audio. PipeWire computes the peaks itself (resample.peaks, the same mechanism pavucontrol uses
+    # for its level meters) and delivers only METER_RATE values per second and channel, so the plugin
+    # never touches the audio samples. The recorder only runs while the frontend polls the levels
+    # (plugin panel open) and stops on its own METER_IDLE_TIMEOUT seconds after the last poll.
+
+    METER_CHANNELS = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"]
+    METER_RATE = 25
+    METER_IDLE_TIMEOUT = 3.0
+
+    async def get_channel_levels(self) -> list[float]:
+        """
+        Returns the peak level (0..1, linear) of each channel since the previous call, in the order of
+        METER_CHANNELS. Starts the meter if it is not running.
+        """
+        self._meter_last_poll = time.monotonic()
+        process = getattr(self, "_meter_process", None)
+        if process is None or process.returncode is not None:
+            await self._start_channel_meter()
+        peaks = getattr(self, "_meter_peaks", None) or [0.0] * len(self.METER_CHANNELS)
+        self._meter_peaks = [0.0] * len(self.METER_CHANNELS)
+        return [round(min(max(p, 0.0), 1.0), 4) for p in peaks]
+
+    async def stop_channel_meter(self) -> bool:
+        await self._stop_channel_meter()
+        return True
+
+    async def _start_channel_meter(self):
+        # Do not restart a failing recorder on every poll.
+        if time.monotonic() < getattr(self, "_meter_retry_after", 0.0):
+            return
+        self._meter_retry_after = time.monotonic() + 2.0
+        _, device_name = await get_virtual_surround_sink_names()
+        if not device_name:
+            return
+        self._meter_peaks = [0.0] * len(self.METER_CHANNELS)
+        # pw-record writes through a buffered stream: in a pipe the few bytes per second would only
+        # arrive every few seconds. stdbuf makes the output unbuffered.
+        prefix = ["stdbuf", "-o0"] if shutil.which("stdbuf") else []
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *prefix, "pw-record",
+                "--target", device_name,
+                "-P", "{ stream.capture.sink = true resample.peaks = true node.name = vss-channel-meter "
+                      "node.description = \"Channel meter\" node.dont-reconnect = true media.role = Monitor }",
+                "--rate", str(self.METER_RATE),
+                "--channels", str(len(self.METER_CHANNELS)),
+                "--channel-map", ",".join(self.METER_CHANNELS),
+                "--format", "f32",
+                "--latency", "40ms",
+                "-",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=subprocess_exec_env(),
+            )
+        except Exception as e:
+            decky.logger.error("Channel meter: unable to start pw-record: %s", e)
+            return
+        decky.logger.info("Channel meter started (pid %s) on '%s'", process.pid, device_name)
+        self._meter_process = process
+        self._meter_task = asyncio.get_event_loop().create_task(self._channel_meter_reader(process))
+
+    async def _channel_meter_reader(self, process):
+        import struct
+        frame_size = 4 * len(self.METER_CHANNELS)
+        fmt = "<" + "f" * len(self.METER_CHANNELS)
+        buffer = b""
+        try:
+            while time.monotonic() - getattr(self, "_meter_last_poll", 0.0) <= self.METER_IDLE_TIMEOUT:
+                try:
+                    chunk = await asyncio.wait_for(process.stdout.read(frame_size * 8), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # No data: nothing is playing and the sink is suspended. Levels stay at 0.
+                    continue
+                if not chunk:
+                    break  # pw-record exited (e.g. the sink was removed)
+                buffer += chunk
+                usable = len(buffer) - len(buffer) % frame_size
+                peaks = self._meter_peaks
+                for offset in range(0, usable, frame_size):
+                    for i, value in enumerate(struct.unpack_from(fmt, buffer, offset)):
+                        value = abs(value)
+                        if value > peaks[i]:
+                            peaks[i] = value
+                buffer = buffer[usable:]
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            decky.logger.error("Channel meter reader error: %s", e)
+        await self._stop_channel_meter(cancel_reader=False)
+
+    async def _stop_channel_meter(self, cancel_reader: bool = True):
+        process = getattr(self, "_meter_process", None)
+        task = getattr(self, "_meter_task", None)
+        self._meter_process = None
+        self._meter_task = None
+        if cancel_reader and task is not None and task is not asyncio.current_task():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        if process is not None and process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), timeout=2)
+            decky.logger.info("Channel meter stopped")
+        self._meter_peaks = [0.0] * len(self.METER_CHANNELS)
 
     async def run_sound_test(self, sink: str, channel: str | None = None) -> bool:
         """

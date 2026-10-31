@@ -31,6 +31,7 @@ Virtual Surround + Rooms is based on [Virtual Surround Sound](https://github.com
 - **Binaural Audio Processing:** Convolves 7.1 surround audio with binaural room impulse responses (BRIRs) for headphone output.
 - **Room Presets:** Eight real rooms, from broadcast studios to a lecture hall, measured with dummy heads.
 - **One Switch:** Turns virtual surround on or off for all apps and games.
+- **Channel Activity:** Shows in real time which of the 8 channels carry audio, so you can see whether a game really outputs surround.
 - **User-Friendly Interface:** Easily enable/disable the effect without complex configuration.
 
 ## Prerequisites
