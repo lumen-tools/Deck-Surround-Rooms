@@ -5,12 +5,20 @@ import {
   Focusable,
   Dropdown,
   ToggleField,
+  ConfirmModal,
+  showModal,
 } from '@decky/ui'
 import { useState, useEffect, CSSProperties } from 'react'
-import { MdArrowBack, MdStop, MdSurroundSound } from 'react-icons/md'
+import { MdArrowBack, MdRestartAlt, MdStop, MdSurroundSound } from 'react-icons/md'
 import { SiDiscord, SiGithub, SiKofi, SiPatreon } from 'react-icons/si'
 import { HrirFile, PluginConfig } from '../../interfaces'
-import { getPluginConfig, setPluginConfig } from '../../constants'
+import {
+  clearPluginConfig,
+  defaultMixerProfile,
+  getPluginConfig,
+  setMixerProfileInBackend,
+  setPluginConfig,
+} from '../../constants'
 import { call } from '@decky/api'
 import { PanelSocialButton } from '../elements/SocialButton'
 import { VscSurroundWith } from 'react-icons/vsc'
@@ -64,7 +72,8 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
   const [currentConfig, setCurrentConfig] = useState(() => getPluginConfig())
   const [hrirFileList, setHrirFileList] = useState<HrirFile[]>([])
   const [surroundSinkDefaultConfig, setSurroundSinkDefaultConfig] = useState<boolean>(false)
-  const [balanceChannels, setBalanceChannels] = useState<boolean>(true)
+  const [isResetting, setIsResetting] = useState<boolean>(false)
+  const [resetMessage, setResetMessage] = useState<string | null>(null)
   const [isApplyingHrir, setIsApplyingHrir] = useState<boolean>(false)
   const [runningTest, setRunningTest] = useState<string | null>(null)
   const [testError, setTestError] = useState<string | null>(null)
@@ -76,18 +85,48 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
     } else {
       setSurroundSinkDefaultConfig(false)
     }
-    const balance = await call<[], boolean>('get_hrir_balance_channels')
-    setBalanceChannels(balance !== false)
   }
 
-  const handleBalanceChannels = async (enabled: boolean) => {
-    setBalanceChannels(enabled)
-    setIsApplyingHrir(true)
+  const resetPlugin = async () => {
+    setIsResetting(true)
+    setResetMessage(null)
+    setRunningTest(null)
+    setTestError(null)
     try {
-      await call<[enabled: boolean], boolean>('set_hrir_balance_channels', enabled)
+      // Frontend settings: mixer, per-game profiles, selected HRIR name, acknowledged notes.
+      clearPluginConfig()
+      const freshConfig = getPluginConfig()
+      setCurrentConfig(freshConfig)
+      // Backend: settings, default HRIR, service restart, app routing.
+      const ok = await call<[], boolean>('reset_plugin')
+      await setMixerProfileInBackend(defaultMixerProfile)
+      await readBackendConfig()
+      setResetMessage(ok ? 'Plugin has been reset to defaults.' : 'Reset finished with errors. Check the plugin log.')
+    } catch (error) {
+      console.error('[decky-virtual-surround-sound:PluginConfigView] Reset failed:', error)
+      setResetMessage('Reset failed. Check the plugin log.')
     } finally {
-      setIsApplyingHrir(false)
+      setIsResetting(false)
     }
+  }
+
+  const confirmResetPlugin = () => {
+    showModal(
+      <ConfirmModal
+        strTitle="Reset Virtual Surround Sound?"
+        strDescription={
+          'This restores the plugin to a fresh install: default HRIR, all mixer and per-game profiles ' +
+          'set back to 100%, all per-app "Enable" switches turned off and the virtual surround sink ' +
+          'used as default output again. The surround service restarts, so audio drops out for a moment.'
+        }
+        strOKButtonText="Reset everything"
+        bDestructiveWarning={true}
+        onOK={() => {
+          resetPlugin()
+        }}
+      />,
+      window,
+    )
   }
 
   const updateHrirFileListList = async () => {
@@ -279,26 +318,6 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
               </PanelSectionRow>
 
               <PanelSectionRow>
-                <div style={fieldBlockStyle}>
-                  <ToggleField
-                    label="Balance channel levels"
-                    checked={balanceChannels}
-                    disabled={isApplyingHrir}
-                    onChange={(e) => {
-                      handleBalanceChannels(e)
-                    }}
-                  />
-                  <div style={helperTextStyle}>
-                    The HRIR presets are recorded at very different levels. Every preset is always
-                    normalised to the same overall loudness. With this option enabled, every virtual
-                    speaker is additionally levelled individually, so all channels are equally loud and
-                    left/right are symmetric. Disable it to keep the original front/side/rear balance of
-                    the preset.
-                  </div>
-                </div>
-              </PanelSectionRow>
-
-              <PanelSectionRow>
                 <div style={{
                   margin: '20px 5px 0',
                   padding: '0px 0px 8px',
@@ -370,15 +389,37 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
                   bottom button plays it through the real SteamOS output device (no filter).
                   Starting a new test stops the previous one.
                   <br />
-                  The sequence goes through the channels in left/right pairs, front to back. A voice
-                  announces each channel:
+                  The sequence starts front left and goes clockwise around you, ending with the
+                  subwoofer. A voice announces each channel:
                   <ul style={{ paddingLeft: 20, margin: 0 }}>
-                    <li>Front Left (FL), Front Right (FR)</li>
+                    <li>Front Left (FL)</li>
                     <li>Front Center (FC)</li>
-                    <li>Side Left (SL), Side Right (SR)</li>
-                    <li>Rear Left (RL), Rear Right (RR)</li>
+                    <li>Front Right (FR)</li>
+                    <li>Side Right (SR)</li>
+                    <li>Rear Right (RR)</li>
+                    <li>Rear Left (RL)</li>
+                    <li>Side Left (SL)</li>
                     <li>50Hz Low-Frequency Effects (LFE) tone (subwoofer)</li>
                   </ul>
+                </div>
+              </PanelSectionRow>
+            </PanelSection>
+            <hr />
+            <PanelSection title="Reset">
+              <PanelSectionRow>
+                <div style={fieldBlockStyle}>
+                  <DialogButton
+                    style={actionButtonStyle}
+                    disabled={isResetting}
+                    onClick={() => confirmResetPlugin()}
+                  >
+                    <MdRestartAlt /> {isResetting ? 'Resetting…' : 'Reset plugin to defaults'}
+                  </DialogButton>
+                  {resetMessage && <div style={helperTextStyle}>{resetMessage}</div>}
+                  <div style={helperTextStyle}>
+                    Restores everything to a fresh install. Use this if the audio sounds wrong and you
+                    are not sure which setting causes it.
+                  </div>
                 </div>
               </PanelSectionRow>
             </PanelSection>

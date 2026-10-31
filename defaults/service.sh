@@ -63,10 +63,18 @@ device_module_args_8=$(
             { "type": "builtin", "label": "copy", "name": "copyRL" },
             { "type": "builtin", "label": "copy", "name": "copyRR" },
             { "type": "builtin", "label": "copy", "name": "copySL" },
-            { "type": "builtin", "label": "copy", "name": "copySR" }
+            { "type": "builtin", "label": "copy", "name": "copySR" },
+            { "type": "builtin", "label": "mixer", "name": "volumeSink" }
         ],
         "inputs":  [ "copyFL:In", "copyFR:In", "copyFC:In", "copyLFE:In", "copyRL:In", "copyRR:In", "copySL:In", "copySR:In" ],
-        "outputs": [ "copyFL:Out", "copyFR:Out", "copyFC:Out", "copyLFE:Out", "copyRL:Out", "copyRR:Out", "copySL:Out", "copySR:Out" ]
+        "outputs": [ "copyFL:Out", "copyFR:Out", "copyFC:Out", "copyLFE:Out", "copyRL:Out", "copyRR:Out", "copySL:Out", "copySR:Out" ],
+        # The volume of this sink (the Steam volume slider) is NOT applied to the audio. It is routed
+        # to an unused control instead, and the plugin mirrors it onto the real output device. That
+        # way the effective volume is always the volume of the real device, so switching between
+        # this sink and the headphones never causes a sudden volume jump.
+        "capture.volumes": [
+            { "control": "volumeSink:Gain 1" }
+        ]
     },
     capture.props = {
         "media.class": "Audio/Sink",
@@ -688,8 +696,14 @@ is_pid_running() {
     [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1
 }
 
+filter_reload_requested="false"
+
 run() {
     trap '_handle_signal' INT QUIT HUP TERM ERR
+    # SIGUSR1 reloads only the filter module (e.g. after the HRIR file changed). The
+    # "Virtual Surround Sound" device sink that the apps are connected to stays in place, so
+    # apps are not moved to another output and keep playing once the new filter is linked.
+    trap 'filter_reload_requested="true"' USR1
     echo "Running service"
     local filter_type="convolver"
     while [[ $# -gt 0 ]]; do
@@ -734,6 +748,14 @@ run() {
         if ! is_pid_running "${virtual_surround_filter_sink_pw_cli_pid}" || ! is_pid_running "${virtual_surround_device_sink_pw_cli_pid}"; then
             break
         fi
+        if [[ "${filter_reload_requested}" == "true" ]]; then
+            filter_reload_requested="false"
+            echo "Reloading filter module"
+            if ! create_virtual_surround_module "${filter_type:?}"; then
+                linking_failed=1
+                break
+            fi
+        fi
         if ! virtual_surround_sinks_exist; then
             echo "Virtual surround sinks are no longer available"
             linking_failed=1
@@ -756,6 +778,56 @@ run() {
     echo "DONE"
 }
 
+# Returns success if the filter output is linked to the real output device.
+filter_output_is_linked() {
+    pw-link -l 2>/dev/null | awk -v port="${virtual_surround_filter_sink_playback_node_name:?}:output_FL" '
+        { line = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", line) }
+        line == port { found = 1; next }
+        found && line ~ /^\|->/ { linked = 1; exit }
+        found && line !~ /^\|/ { found = 0 }
+        END { exit linked ? 0 : 1 }
+    '
+}
+
+wait_for_filter_linked() {
+    local retries="${1:-40}"
+    local i
+    for ((i = 0; i < retries; i++)); do
+        if filter_output_is_linked; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
+reload_filter() {
+    echo "Reloading filter module of ${service_name:?}"
+    local main_pid=""
+    main_pid=$(systemctl --user show -p MainPID --value "${service_name:?}" 2>/dev/null || true)
+    if [[ -z "${main_pid}" || "${main_pid}" == "0" ]]; then
+        echo "  - Service is not running. Restarting it instead."
+        restart_service
+        return 0
+    fi
+    local old_module_pid=""
+    old_module_pid=$(cat "${filter_module_pid_file:?}" 2>/dev/null || true)
+    kill -USR1 "${main_pid}"
+    # Wait until the service has replaced the filter module and linked it again.
+    local i
+    for ((i = 0; i < 60; i++)); do
+        local current_module_pid=""
+        current_module_pid=$(cat "${filter_module_pid_file:?}" 2>/dev/null || true)
+        if [[ -n "${current_module_pid}" && "${current_module_pid}" != "${old_module_pid}" ]] && filter_output_is_linked; then
+            echo "  - Filter reloaded"
+            return 0
+        fi
+        sleep 0.25
+    done
+    echo "  - Timed out waiting for the filter to reload"
+    return 1
+}
+
 # speaker-test addresses single speakers (-s N) in its own "circular clockwise" order, NOT in the
 # PipeWire/ALSA channel order:
 #   1=FL 2=FC 3=FR 4=SR 5=RR 6=RL 7=SL 8=LFE
@@ -776,8 +848,8 @@ speaker_test_index() {
 speaker_test() {
     echo "Running sound test"
     local pulse_sink_name="${virtual_surround_filter_sink_capture_node_name:?}"
-    # Default sequence: left/right pairs from front to back, then the subwoofer.
-    local -a test_channels=(FL FR FC SL SR RL RR LFE)
+    # Default sequence: start front left, go clockwise around the listener, end with the subwoofer.
+    local -a test_channels=(FL FC FR SR RR RL SL LFE)
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --sink=*)
@@ -804,11 +876,23 @@ speaker_test() {
 
     # Never let the test silently fall back to some other output. If the sink does not exist,
     # PipeWire would route the stream to whatever the current default is, which makes the
-    # result different from one run to the next.
-    if ! pactl list short sinks 2>/dev/null | cut -f2 | grep -Fxq -- "${pulse_sink_name:?}"; then
+    # result different from one run to the next. Allow a few seconds in case the filter is
+    # just being (re)loaded.
+    if ! wait_for_sink_registration "${pulse_sink_name:?}" 20 0.25; then
         echo "ERROR! Sink '${pulse_sink_name}' does not exist. Aborting sound test." >&2
         exit 1
     fi
+    if [[ "${pulse_sink_name}" == "${virtual_surround_filter_sink_capture_node_name:?}" ]]; then
+        if ! wait_for_filter_linked 40; then
+            echo "WARNING! Filter output is not linked to an output device yet." >&2
+        fi
+    fi
+    # Lead-in: half a second of silence wakes up the (possibly suspended) output device, so the
+    # first announcement is not cut off.
+    head -c $((48000 * 8 * 2 / 2)) /dev/zero |
+        paplay --raw --format=s16le --rate=48000 --channels=8 \
+            --channel-map=front-left,front-right,front-center,lfe,rear-left,rear-right,side-left,side-right \
+            --device="${pulse_sink_name:?}" >/dev/null 2>&1 || true
 
     local ch idx
     for ch in "${test_channels[@]}"; do
@@ -921,7 +1005,7 @@ stop_service() {
 }
 
 print_usage_and_exit() {
-    echo "Usage: $0 {run|install|uninstall|restart|stop|kill-all|print-vss-info|speaker-test} [--filter=<convolver|sofa>] [--sink=<name>] [--channel=<FL|FR|FC|LFE|RL|RR|SL|SR>] [additional args...]"
+    echo "Usage: $0 {run|install|uninstall|restart|reload-filter|stop|kill-all|print-vss-info|speaker-test} [--filter=<convolver|sofa>] [--sink=<name>] [--channel=<FL|FR|FC|LFE|RL|RR|SL|SR>] [additional args...]"
     exit "$1"
 }
 
@@ -962,6 +1046,9 @@ case "$cmd" in
     ;;
 "restart")
     restart_service "$@"
+    ;;
+"reload-filter")
+    reload_filter "$@"
     ;;
 "stop")
     stop_service "$@"

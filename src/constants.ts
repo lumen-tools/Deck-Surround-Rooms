@@ -133,6 +133,15 @@ export const getPluginConfig = (): PluginConfig => {
   return config
 }
 
+// Removes all locally stored frontend settings (mixer, per-game profiles, selected HRIR, notes).
+export const clearPluginConfig = (): void => {
+  try {
+    window.localStorage.removeItem(pluginSettingsKey)
+  } catch (error) {
+    console.error('[decky-virtual-surround-sound:constants] Failed to clear plugin config:', error)
+  }
+}
+
 export const setPluginConfig = (updates: Partial<PluginConfig>): void => {
   const currentConfig = getPluginConfig()
   // Deep merge the updates into the current config:

@@ -154,7 +154,7 @@ hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wa
 
 # Bump this whenever the filter graph in service.sh changes so that an already running
 # systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
-SERVICE_GRAPH_VERSION = 2
+SERVICE_GRAPH_VERSION = 3
 # Bump this whenever the HRIR preparation (normalisation) changes.
 HRIR_PREPARE_VERSION = 1
 
@@ -259,17 +259,17 @@ def write_wav_float32(path: str, rate: int, channels: list[list[float]]) -> None
     os.replace(tmp_path, path)
 
 
-def prepare_hrir(source_path: str, dest_path: str, balance_channels: bool) -> dict:
+def prepare_hrir(source_path: str, dest_path: str) -> dict:
     """
     Converts a HeSuVi style HRIR WAV into the 14 channel float WAV that the convolver graph expects
     and normalises its level.
 
     - 7 channel (symmetric) HeSuVi files are expanded to 14 channels by mirroring the left side.
-    - The overall level is normalised so that different HRIR presets play back at the same loudness
-      (the bundled presets differ by more than 10 dB otherwise).
-    - With balance_channels enabled, every virtual speaker is normalised individually so that all
-      8 channels have the same loudness and left/right are symmetric. The interaural level
-      difference of each speaker (which carries the direction information) is preserved.
+    - Every virtual speaker is normalised individually to the same energy. This makes all presets play
+      back at the same loudness (the bundled presets differ by more than 10 dB otherwise), makes all
+      channels equally loud and left/right symmetric. The interaural level difference of each speaker
+      (which carries the direction information) is preserved. Personal preferences are handled by the
+      per-channel mixer.
     """
     rate, channels = read_wav(source_path)
     n_ch = len(channels)
@@ -285,14 +285,7 @@ def prepare_hrir(source_path: str, dest_path: str, balance_channels: bool) -> di
         raise UnsupportedHrirError("HRIR contains silent channels")
 
     import math
-    gains = {}
-    if balance_channels:
-        for speaker, energy in energies.items():
-            gains[speaker] = 1.0 / math.sqrt(energy)
-    else:
-        mean_energy = sum(energies.values()) / len(energies)
-        for speaker in energies:
-            gains[speaker] = 1.0 / math.sqrt(mean_energy)
+    gains = {speaker: 1.0 / math.sqrt(energy) for speaker, energy in energies.items()}
 
     out = [list(c) for c in channels]
     for speaker, (a, b) in HRIR_SPEAKER_CHANNELS.items():
@@ -396,6 +389,9 @@ class Plugin:
     def __init__(self):
         self._background_task = None
         self._sound_test_process = None
+        self._last_mixer_profile = None
+        self._volume_sync_task = None
+        self._volume_sync_state: dict = {}
         self.stop_event = asyncio.Event()
 
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
@@ -408,6 +404,7 @@ class Plugin:
         self.stop_event.clear()
         # Start the background task.
         self._background_task = self.loop.create_task(self.background_tasks())
+        self._volume_sync_task = self.loop.create_task(self.volume_sync_task())
         decky.logger.info("Plugin main started")
 
     # Function called first during the unload process, utilize this to handle your plugin being stopped, but not
@@ -416,6 +413,10 @@ class Plugin:
         decky.logger.info("Unloading plugin: stopping background tasks...")
         # Signal the background task to exit.
         self.stop_event.set()
+        if self._volume_sync_task:
+            self._volume_sync_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._volume_sync_task
         if self._background_task:
             self._background_task.cancel()
             try:
@@ -460,6 +461,149 @@ class Plugin:
         decky.migrate_runtime(
             os.path.join(decky.DECKY_HOME, "template"),
             os.path.join(decky.DECKY_USER_HOME, ".local", "share", "decky-template"))
+
+    # ---- Volume sync ---------------------------------------------------------------------------
+    #
+    # The "Virtual Surround Sound" sink does not apply its own volume (see capture.volumes in
+    # service.sh). Instead its volume is mirrored onto the real output device and vice versa:
+    #   - Steam volume slider on "Virtual Surround Sound"  -> real device gets the same volume
+    #   - real device volume changes (e.g. headphones plugged in and their saved volume restored)
+    #                                                       -> "Virtual Surround Sound" shows it
+    # The effective volume is therefore always the real device volume, whichever output is selected.
+    # Nothing is ever raised artificially, so switching outputs can't cause a sudden volume jump.
+
+    @staticmethod
+    def _sink_volume(sink: dict) -> tuple[int | None, bool]:
+        volume = sink.get("volume")
+        values = []
+        if isinstance(volume, dict):
+            for details in volume.values():
+                if isinstance(details, dict) and isinstance(details.get("value"), int):
+                    values.append(details["value"])
+        level = round(sum(values) / len(values)) if values else None
+        return level, bool(sink.get("mute"))
+
+    async def _pactl(self, *args) -> bool:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "pactl", *args,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env=subprocess_exec_env()
+            )
+            _, stderr = await process.communicate()
+            if process.returncode != 0:
+                decky.logger.warning("pactl %s failed: %s", " ".join(args), stderr.decode().strip())
+                return False
+            return True
+        except Exception as e:
+            decky.logger.warning("pactl %s failed: %s", " ".join(args), e)
+            return False
+
+    async def sync_volumes(self):
+        state = self._volume_sync_state
+        if "names" not in state:
+            filter_name, device_name = await get_virtual_surround_sink_names()
+            if not filter_name or not device_name:
+                return
+            state["names"] = (filter_name, device_name)
+        filter_name, device_name = state["names"]
+
+        sinks = await self.list_sinks() or []
+        vss = next((sink for sink in sinks if sink.get("name") == device_name), None)
+        if vss is None:
+            state.pop("vss_index", None)
+            return
+        # The real output device: the default sink, or the highest priority sink when one of the
+        # virtual surround sinks is the default (same rule the service uses for linking).
+        output = None
+        default_name = await self.get_default_sink_name()
+        if default_name and default_name not in (filter_name, device_name):
+            output = next((sink for sink in sinks if sink.get("name") == default_name), None)
+        if output is None:
+            output_id = await self.get_highest_priority_sink_id()
+            output = next((sink for sink in sinks if self._object_id_from_sink(sink) == output_id), None)
+        if output is None or output.get("name") in (filter_name, device_name):
+            return
+
+        vss_index = self._sink_index_from_entry(vss)
+        output_name = output.get("name")
+        vss_level, vss_mute = self._sink_volume(vss)
+        out_level, out_mute = self._sink_volume(output)
+        if vss_level is None or out_level is None:
+            return
+
+        tolerance = 655  # ~1%
+        vss_changed = (
+            state.get("vss_level") is not None
+            and (abs(vss_level - state["vss_level"]) > tolerance or vss_mute != state.get("vss_mute"))
+        )
+        new_pairing = state.get("vss_index") != vss_index or state.get("output_name") != output_name
+
+        if new_pairing or not vss_changed:
+            # The real device is the reference (startup, new/plugged output device, re-created sink,
+            # or its volume was changed directly).
+            if abs(vss_level - out_level) > tolerance:
+                await self._pactl("set-sink-volume", device_name, str(out_level))
+                vss_level = out_level
+            if vss_mute != out_mute:
+                await self._pactl("set-sink-mute", device_name, "1" if out_mute else "0")
+                vss_mute = out_mute
+        else:
+            # The user changed the "Virtual Surround Sound" volume (e.g. the Steam volume slider).
+            if abs(vss_level - out_level) > tolerance:
+                await self._pactl("set-sink-volume", output_name, str(vss_level))
+                out_level = vss_level
+            if vss_mute != out_mute:
+                await self._pactl("set-sink-mute", output_name, "1" if vss_mute else "0")
+                out_mute = vss_mute
+
+        state.update({
+            "vss_index": vss_index,
+            "output_name": output_name,
+            "vss_level": vss_level,
+            "vss_mute": vss_mute,
+        })
+
+    async def volume_sync_task(self):
+        """Runs sync_volumes whenever PulseAudio/PipeWire reports a sink or server change."""
+        decky.logger.info("Volume sync started")
+        while not self.stop_event.is_set():
+            process = None
+            try:
+                await self.sync_volumes()
+                process = await asyncio.create_subprocess_exec(
+                    "pactl", "subscribe",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                    env=subprocess_exec_env()
+                )
+                while not self.stop_event.is_set():
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode(errors="ignore")
+                    if " on sink " not in text and " on server" not in text:
+                        continue
+                    # Collapse bursts of events (e.g. while dragging the volume slider) into one sync.
+                    while True:
+                        try:
+                            more = await asyncio.wait_for(process.stdout.readline(), timeout=0.05)
+                        except asyncio.TimeoutError:
+                            break
+                        if not more:
+                            break
+                    await self.sync_volumes()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                decky.logger.error("Volume sync error: %s", e)
+            finally:
+                if process is not None and process.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
+            # pactl subscribe ended (e.g. pipewire-pulse restarted); retry shortly.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.stop_event.wait(), timeout=2)
+        decky.logger.info("Volume sync stopped")
 
     async def background_tasks(self):
         decky.logger.info("Background tasks started")
@@ -514,11 +658,9 @@ class Plugin:
     def _install_hrir(source_path: str) -> bool:
         """Prepares (normalises) the HRIR and writes it to ~/.config/pipewire/hrir.wav."""
         os.makedirs(os.path.dirname(hrir_dest_path), exist_ok=True)
-        balance = bool(settings.getSetting("hrir_balance_channels", True))
         try:
-            info = prepare_hrir(source_path, hrir_dest_path, balance)
-            decky.logger.info("Installed HRIR %s -> %s (balance=%s): %s",
-                              source_path, hrir_dest_path, balance, info)
+            info = prepare_hrir(source_path, hrir_dest_path)
+            decky.logger.info("Installed HRIR %s -> %s: %s", source_path, hrir_dest_path, info)
         except UnsupportedHrirError as e:
             # Unknown layout. Install unchanged so the user can still use it.
             decky.logger.warning("Unable to normalise HRIR '%s' (%s). Installing unchanged.", source_path, e)
@@ -759,22 +901,62 @@ class Plugin:
         decky.logger.info("Installing %s", selected_hrir_path)
         try:
             self._install_hrir(selected_hrir_path)
-            await service_script_exec("restart")
+            await self._reload_filter()
             return True
         except Exception as e:
             decky.logger.error("Error: Failed to install HRIR WAV file: %s", e)
         return False
 
-    async def get_hrir_balance_channels(self) -> bool:
-        return bool(settings.getSetting("hrir_balance_channels", True))
+    async def _reload_filter(self):
+        """
+        Reloads only the filter module (new HRIR/SOFA file). The "Virtual Surround Sound" sink that
+        the apps are connected to stays in place, so apps keep their output. Restarting the whole
+        service used to remove that sink, which moved apps to another output or muted them.
+        """
+        await service_script_exec("reload-filter")
+        # The new filter sink starts at 100% on every channel; re-apply the mixer right away
+        # instead of waiting for the frontend's next 5s poll.
+        if self._last_mixer_profile:
+            await self.set_mixer_profile(self._last_mixer_profile)
 
-    async def set_hrir_balance_channels(self, enabled: bool) -> bool:
-        """Toggles per-channel level balancing and re-installs the current HRIR."""
-        settings.setSetting("hrir_balance_channels", bool(enabled))
-        source_path = settings.getSetting("hrir_source_path", None)
-        if not source_path or not os.path.isfile(source_path):
-            source_path = os.path.join(hrir_directory, default_hrir_file)
-        return await self.set_hrir_file(source_path)
+    async def reset_plugin(self) -> bool:
+        """
+        Resets the whole plugin to a fresh install state:
+        - all backend settings back to their defaults (default sink option, per-app routing)
+        - default HRIR preset re-installed, custom HRIR backup removed
+        - surround service re-installed and restarted
+        - apps that were routed to the virtual surround sink are moved back
+        The frontend clears its own settings (mixer and per-game profiles) and re-applies the
+        default mixer profile afterwards.
+        """
+        decky.logger.info("Resetting plugin to defaults")
+        ok = True
+        await self._stop_running_sound_test()
+        settings.setSetting("surround_sink_default", True)
+        settings.setSetting("enabled_apps", [])
+        try:
+            if os.path.exists(hrir_original_backup_path):
+                os.remove(hrir_original_backup_path)
+            self._install_hrir(os.path.join(hrir_directory, default_hrir_file))
+        except Exception as e:
+            decky.logger.error("Reset: failed to install default HRIR: %s", e)
+            ok = False
+        await service_script_exec("install", ["--restart-after-install"])
+        settings.setSetting("service_graph_version", SERVICE_GRAPH_VERSION)
+        # Give the service a moment to re-create the sinks, then re-apply the app routing.
+        filter_name, _ = await get_virtual_surround_sink_names()
+        for _ in range(20):
+            sinks = await self.list_sinks() or []
+            if any(sink.get("name") == filter_name for sink in sinks):
+                break
+            await asyncio.sleep(0.5)
+        try:
+            await self.check_state()
+        except Exception as e:
+            decky.logger.error("Reset: failed to re-apply audio routing: %s", e)
+            ok = False
+        decky.logger.info("Plugin reset finished (ok=%s)", ok)
+        return ok
 
     async def get_sofa_file_list(self) -> list[dict[str, str | None | int]] | None:
         """Lists available SOFA files."""
@@ -808,7 +990,7 @@ class Plugin:
             shutil.copy2(selected_sofa_path, sofa_dest_path)
             os.chmod(sofa_dest_path, 0o644)
             decky.logger.info("Copied %s to %s", selected_sofa_path, sofa_dest_path)
-            await service_script_exec("restart")
+            await self._reload_filter()
             return True
         except Exception as e:
             decky.logger.error("Error: Failed to copy SOFA file: %s", e)
@@ -1393,6 +1575,7 @@ class Plugin:
             }
           }
         """
+        self._last_mixer_profile = mixer_profile
         filter_name, _ = await get_virtual_surround_sink_names()
         if not filter_name:
             decky.logger.error("Unable to resolve virtual surround filter sink name")
