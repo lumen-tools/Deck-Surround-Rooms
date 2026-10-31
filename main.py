@@ -430,6 +430,10 @@ class Plugin:
         self._volume_sync_state: dict = {}
         self._neutralized_vss_state = None
         self._state_lock = asyncio.Lock()
+        self._vss_guard_task = None
+        self._vss_object_id = None
+        self._vss_channels = None
+        self._vss_guard_fast_until = 0.0
         self.stop_event = asyncio.Event()
 
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
@@ -443,6 +447,7 @@ class Plugin:
         # Start the background task.
         self._background_task = self.loop.create_task(self.background_tasks())
         self._volume_sync_task = self.loop.create_task(self.volume_sync_task())
+        self._vss_guard_task = self.loop.create_task(self.vss_volume_guard_task())
         decky.logger.info("Plugin main started")
 
     # Function called first during the unload process, utilize this to handle your plugin being stopped, but not
@@ -451,6 +456,10 @@ class Plugin:
         decky.logger.info("Unloading plugin: stopping background tasks...")
         # Signal the background task to exit.
         self.stop_event.set()
+        if self._vss_guard_task:
+            self._vss_guard_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._vss_guard_task
         if self._volume_sync_task:
             self._volume_sync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -552,6 +561,8 @@ class Plugin:
         vss = next((sink for sink in sinks if sink.get("name") == device_name), None)
         if vss is None:
             state.pop("vss_index", None)
+            # Object ids get reused by PipeWire; never touch a stale one.
+            self._vss_object_id = None
             return
         # The real output device: the default sink, or the highest priority sink when one of the
         # virtual surround sinks is the default (same rule the service uses for linking).
@@ -611,11 +622,41 @@ class Plugin:
             await self._neutralize_vss_volume(vss)
             self._neutralized_vss_state = current
 
+    async def neutralize_vss_volume_now(self):
+        _, device_name = self._volume_sync_state.get("names") or await get_virtual_surround_sink_names()
+        vss = next((sink for sink in await self.list_sinks() or [] if sink.get("name") == device_name), None)
+        if vss is not None:
+            await self._neutralize_vss_volume(vss)
+
+    async def vss_volume_guard_task(self):
+        """
+        Steam (and possibly other clients) set the VSS volume directly in PipeWire. Even when the value does
+        not change, that re-enables the VSS attenuation, and it produces no event that the volume sync could
+        react to. Re-neutralise periodically: every 0.5 s right after a switch, every 2 s otherwise.
+        Neutralising emits no events, so this cannot cause a feedback loop.
+        """
+        while not self.stop_event.is_set():
+            fast = time.monotonic() < self._vss_guard_fast_until
+            try:
+                object_id = self._vss_object_id
+                if object_id is not None and await self.get_surround_enabled():
+                    await self._set_soft_volumes(object_id, self._vss_channels or 8)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                decky.logger.debug("VSS volume guard: %s", e)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.stop_event.wait(), timeout=0.5 if fast else 2.0)
+
     async def _neutralize_vss_volume(self, vss_sink: dict):
         object_id = self._object_id_from_sink(vss_sink)
         if object_id is None:
             return
-        n_channels = len(self._channel_map_from_sink(vss_sink)) or 8
+        self._vss_object_id = object_id
+        self._vss_channels = len(self._channel_map_from_sink(vss_sink)) or 8
+        await self._set_soft_volumes(object_id, self._vss_channels)
+
+    async def _set_soft_volumes(self, object_id: int, n_channels: int):
         volumes = ", ".join(["1.0"] * n_channels)
         try:
             process = await asyncio.create_subprocess_exec(
@@ -626,8 +667,10 @@ class Plugin:
             _, stderr = await process.communicate()
             if process.returncode != 0:
                 decky.logger.warning("pw-cli set-param softVolumes failed: %s", stderr.decode().strip())
+                self._vss_object_id = None
         except Exception as e:
             decky.logger.warning("pw-cli set-param softVolumes failed: %s", e)
+            self._vss_object_id = None
 
     async def volume_sync_task(self):
         """Runs sync_volumes whenever PulseAudio/PipeWire reports a sink or server change."""
@@ -768,9 +811,17 @@ class Plugin:
         if not await self._wait_for_surround_sinks(timeout=20.0):
             decky.logger.warning("Surround switch: virtual surround sinks are not available")
             return False
+        self._vss_guard_fast_until = time.monotonic() + 5.0
         for attempt in range(10):
             await self.check_state()
             if await self._routing_is_applied(bool(enabled)):
+                if enabled:
+                    # Steam re-applies the volume of the new default output shortly after the switch, which
+                    # turns the VSS attenuation back on (silence at low volumes). Neutralise it a few times
+                    # before reporting the switch as done.
+                    for _ in range(3):
+                        await self.neutralize_vss_volume_now()
+                        await asyncio.sleep(0.4)
                 return True
             await asyncio.sleep(0.3)
         decky.logger.warning("Surround switch: not all apps could be moved")
