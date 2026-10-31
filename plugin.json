@@ -11,12 +11,9 @@
       "7.1",
       "headphones",
       "binaural",
-      "spatializer",
-      "dts",
-      "dolby",
-      "atmos"
+      "spatializer"
     ],
-    "description": "Create a virtual surround sound audio sink that converts 7.1 surround audio into immersive binaural output for headphones via HRIR processing with multiple presets (Atmos, DTS, Steam, Razer, etc.).",
+    "description": "Create a virtual surround sound audio sink that converts 7.1 surround audio into immersive binaural output for headphones via HRIR processing with room presets measured in real studios and rooms.",
     "image": "https://raw.githubusercontent.com/lumen-tools/decky-virtual-surround-sound/master/assets/screenshot_1.jpg"
   }
 }

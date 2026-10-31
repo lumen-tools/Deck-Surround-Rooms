@@ -145,7 +145,7 @@ settings.read()
 
 # Configure other plugin files and directories
 hrir_directory = os.path.join(script_directory, "hrir-audio")
-default_hrir_file = "HRTF from Aureal Vortex 2 - WIP v2.wav"
+default_hrir_file = "Studio Small - WDR Control Room 1.wav"
 pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewire")
 hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
 sofa_directory = os.path.join(script_directory, "hrtf-sofa")
@@ -171,19 +171,18 @@ HRIR_SPEAKER_CHANNELS = {
 }
 
 
-# Display names for the bundled HRIR presets (file names are kept unchanged on disk).
+# Display names for the bundled presets, in the order they are listed (file names are kept unchanged on disk).
+# The presets are binaural room impulse responses of real rooms taken from the ASH IR Dataset.
+# See defaults/hrir-audio/LICENSE.txt and the README for sources and licences.
 HRIR_DISPLAY_NAMES = {
-    "HRTF from Aureal Vortex 2 - WIP v2": "Aureal Vortex 2",
-    "DTS Headphone": "DTS Headphone",
-    "Dolby Atmos 7.1 virtual surround sound for headphones": "Dolby Atmos",
-    "EAC Default HRTF (35°-100°-150°)": "EAC Default",
-    "KEMAR (with shoulders) generated with Mesh2HRTF, a free and robust HRTF generator": "KEMAR (Mesh2HRTF)",
-    "OpenAL Soft default HRTF": "OpenAL Soft",
-    "Razer Surround": "Razer Surround",
-    "Razer Surround with fixed upper bass": "Razer Surround (Bass Fix)",
-    "Realtek 7.1 Headphone Virtualization": "Realtek Headphone",
-    "Steam Audio": "Steam Audio",
-    "Windows Sonic 7.1 virtual surround sound for headphones": "Windows Sonic",
+    "Studio Small - WDR Control Room 1": "Small Studio",
+    "Studio Medium - WDR Control Room 7": "Medium Studio",
+    "Studio Large - WDR Small Broadcast Studio": "Large Studio",
+    "Studio TV - TU Ilmenau TV Studio": "TV Studio",
+    "Room Listening - University of Salford Listening Room": "Listening Room",
+    "Room Audio Lab - University of Rostock Audio Lab": "Audio Lab",
+    "Room Conference - TU Ilmenau Conference Room": "Conference Room",
+    "Room Lecture Hall - TU Berlin Auditorium 3": "Lecture Hall",
 }
 
 
@@ -194,6 +193,7 @@ def _hrir_name_key(name: str) -> str:
 
 
 _HRIR_DISPLAY_NAMES_BY_KEY = {_hrir_name_key(k): v for k, v in HRIR_DISPLAY_NAMES.items()}
+_HRIR_SORT_ORDER = {v: i for i, v in enumerate(HRIR_DISPLAY_NAMES.values())}
 
 
 def hrir_display_name(path: str) -> str:
@@ -743,8 +743,14 @@ class Plugin:
         decky.logger.info("Background tasks stopped")
 
     async def init_config(self):
+        source_path = settings.getSetting("hrir_source_path", None)
         if not os.path.exists(hrir_dest_path):
             decky.logger.info("Installing default HRIR .wav file '%s'", default_hrir_file)
+            self._install_hrir(os.path.join(hrir_directory, default_hrir_file))
+        elif source_path and not os.path.exists(source_path):
+            # The selected preset is no longer shipped with the plugin (older versions bundled presets
+            # that were removed). Switch to the default preset.
+            decky.logger.info("Selected HRIR '%s' no longer exists. Installing default '%s'", source_path, default_hrir_file)
             self._install_hrir(os.path.join(hrir_directory, default_hrir_file))
         elif settings.getSetting("hrir_prepared_version", 0) != HRIR_PREPARE_VERSION:
             # Installed by an older plugin version as a raw copy. Find out which preset it was and
@@ -768,9 +774,8 @@ class Plugin:
                     return candidate
         except OSError:
             pass
-        # Unknown (custom) file: keep a backup of the original so it can be re-processed later.
-        shutil.copy2(hrir_dest_path, hrir_original_backup_path)
-        return hrir_original_backup_path
+        # Not one of the bundled presets (e.g. a preset that older versions shipped): use the default.
+        return os.path.join(hrir_directory, default_hrir_file)
 
     @staticmethod
     def _install_hrir(source_path: str) -> bool:
@@ -1032,7 +1037,7 @@ class Plugin:
         active_path = settings.getSetting("hrir_source_path", os.path.join(hrir_directory, default_hrir_file))
         for entry in hrir_files:
             entry["active"] = entry["path"] == active_path
-        hrir_files.sort(key=lambda x: x["label"].lower())
+        hrir_files.sort(key=lambda x: (_HRIR_SORT_ORDER.get(x["label"], len(_HRIR_SORT_ORDER)), x["label"].lower()))
         return hrir_files
 
     async def set_hrir_file(self, selected_hrir_path: str) -> bool:
