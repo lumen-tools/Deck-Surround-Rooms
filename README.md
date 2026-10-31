@@ -8,6 +8,20 @@ Virtual Surround + Rooms is a Decky plugin that provides a virtual audio output 
 
 Users of this plugin are able to place a custom .wav from the HRTF Database (<https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>) at `~/.config/pipewire/hrir.wav`. Note that changing presets in the plugin config will overwrite this file. Set the file to read-only to prevent this from happening.
 
+## Installation
+
+Virtual Surround + Rooms is not in the Decky Plugin Store. Install it from the [GitHub releases](https://github.com/lumen-tools/decky-virtual-surround-rooms/releases/latest):
+
+1. If the original *Virtual Surround Sound* plugin is installed, uninstall it first. Both use the same audio service and would get in each other's way.
+2. In Decky, open **Settings → General** and turn on **Developer mode**.
+3. Open **Settings → Developer** and choose **Install Plugin from URL**. Enter:
+   ```
+   https://github.com/lumen-tools/decky-virtual-surround-rooms/releases/latest/download/decky-virtual-surround-rooms.zip
+   ```
+   Alternatively, download the ZIP from the latest release and use **Install Plugin from ZIP File**.
+
+To update, repeat step 3. Your settings are kept.
+
 ## What is different from the original
 
 ### Room simulation instead of plain virtualisation
