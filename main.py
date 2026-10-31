@@ -1057,6 +1057,13 @@ class Plugin:
         # instead of waiting for the frontend's next 5s poll.
         if self._last_mixer_profile:
             await self.set_mixer_profile(self._last_mixer_profile)
+        # The filter sink disappearing and reappearing makes Steam re-apply the output volume, which
+        # re-enables the VSS attenuation (silence until the volume is changed). Same handling as after
+        # switching surround on.
+        self._vss_guard_fast_until = time.monotonic() + 5.0
+        for _ in range(3):
+            await self.neutralize_vss_volume_now()
+            await asyncio.sleep(0.4)
 
     async def reset_plugin(self) -> bool:
         """
