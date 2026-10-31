@@ -63,18 +63,10 @@ device_module_args_8=$(
             { "type": "builtin", "label": "copy", "name": "copyRL" },
             { "type": "builtin", "label": "copy", "name": "copyRR" },
             { "type": "builtin", "label": "copy", "name": "copySL" },
-            { "type": "builtin", "label": "copy", "name": "copySR" },
-            { "type": "builtin", "label": "mixer", "name": "volumeSink" }
+            { "type": "builtin", "label": "copy", "name": "copySR" }
         ],
         "inputs":  [ "copyFL:In", "copyFR:In", "copyFC:In", "copyLFE:In", "copyRL:In", "copyRR:In", "copySL:In", "copySR:In" ],
-        "outputs": [ "copyFL:Out", "copyFR:Out", "copyFC:Out", "copyLFE:Out", "copyRL:Out", "copyRR:Out", "copySL:Out", "copySR:Out" ],
-        # The volume of this sink (the Steam volume slider) is NOT applied to the audio. It is routed
-        # to an unused control instead, and the plugin mirrors it onto the real output device. That
-        # way the effective volume is always the volume of the real device, so switching between
-        # this sink and the headphones never causes a sudden volume jump.
-        "capture.volumes": [
-            { "control": "volumeSink:Gain 1" }
-        ]
+        "outputs": [ "copyFL:Out", "copyFR:Out", "copyFC:Out", "copyLFE:Out", "copyRL:Out", "copyRR:Out", "copySL:Out", "copySR:Out" ]
     },
     capture.props = {
         "media.class": "Audio/Sink",
@@ -175,6 +167,7 @@ filter_module_convolver_args_8=$(
     capture.props = {
         "node.name": "${virtual_surround_filter_sink_capture_node_name:?}",
         "node.description": "${virtual_surround_filter_sink_description:?}",
+        "node.nick": "${virtual_surround_filter_sink_description:?}",
         "media.class": "Audio/Sink",
         "audio.channels": 8,
         "audio.position": [ FL FR FC LFE RL RR SL SR ],
@@ -326,6 +319,7 @@ filter_module_sofa_args_8=$(
     capture.props = {
         "node.name": "${virtual_surround_filter_sink_capture_node_name:?}",
         "node.description": "${virtual_surround_filter_sink_description:?}",
+        "node.nick": "${virtual_surround_filter_sink_description:?}",
         "media.class": "Audio/Sink",
         "audio.channels": 8,
         "audio.position": [ FL FR FC LFE RL RR SL SR ],

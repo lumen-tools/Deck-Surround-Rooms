@@ -154,7 +154,7 @@ hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wa
 
 # Bump this whenever the filter graph in service.sh changes so that an already running
 # systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
-SERVICE_GRAPH_VERSION = 3
+SERVICE_GRAPH_VERSION = 4
 # Bump this whenever the HRIR preparation (normalisation) changes.
 HRIR_PREPARE_VERSION = 1
 
@@ -392,6 +392,7 @@ class Plugin:
         self._last_mixer_profile = None
         self._volume_sync_task = None
         self._volume_sync_state: dict = {}
+        self._neutralized_vss_state = None
         self.stop_event = asyncio.Event()
 
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
@@ -464,8 +465,10 @@ class Plugin:
 
     # ---- Volume sync ---------------------------------------------------------------------------
     #
-    # The "Virtual Surround Sound" sink does not apply its own volume (see capture.volumes in
-    # service.sh). Instead its volume is mirrored onto the real output device and vice versa:
+    # The volume of the "Virtual Surround Sound" sink is mirrored onto the real output device and
+    # vice versa. The VSS sink itself keeps showing its volume but does not apply it: its internal
+    # software volume ("softVolumes") is set back to 1.0 after every change. This is the same thing
+    # PipeWire's filter-chain does internally for capture.volumes, but without touching the graph.
     #   - Steam volume slider on "Virtual Surround Sound"  -> real device gets the same volume
     #   - real device volume changes (e.g. headphones plugged in and their saved volume restored)
     #                                                       -> "Virtual Surround Sound" shows it
@@ -563,6 +566,31 @@ class Plugin:
             "vss_level": vss_level,
             "vss_mute": vss_mute,
         })
+        # Every volume change on the VSS sink (by Steam or by us) resets its software volume, so it
+        # has to be neutralised again. Our own pw-cli call triggers another change event, which is
+        # ignored because the state did not change.
+        current = (vss_index, vss_level, vss_mute)
+        if self._neutralized_vss_state != current:
+            await self._neutralize_vss_volume(vss)
+            self._neutralized_vss_state = current
+
+    async def _neutralize_vss_volume(self, vss_sink: dict):
+        object_id = self._object_id_from_sink(vss_sink)
+        if object_id is None:
+            return
+        n_channels = len(self._channel_map_from_sink(vss_sink)) or 8
+        volumes = ", ".join(["1.0"] * n_channels)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "pw-cli", "set-param", str(object_id), "Props", f'{{ "softVolumes": [ {volumes} ] }}',
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env=subprocess_exec_env()
+            )
+            _, stderr = await process.communicate()
+            if process.returncode != 0:
+                decky.logger.warning("pw-cli set-param softVolumes failed: %s", stderr.decode().strip())
+        except Exception as e:
+            decky.logger.warning("pw-cli set-param softVolumes failed: %s", e)
 
     async def volume_sync_task(self):
         """Runs sync_volumes whenever PulseAudio/PipeWire reports a sink or server change."""
