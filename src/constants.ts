@@ -1,7 +1,10 @@
-// Site URLs
 import { Channel, MixerProfile, PluginConfig } from './interfaces'
 import { Router } from '@decky/ui'
 import { call } from '@decky/api'
+
+// Links shown in the settings page
+export const FORK_REPO_URL = 'https://github.com/lumen-tools/decky-virtual-surround-sound'
+export const ORIGINAL_REPO_URL = 'https://github.com/DeckSettings/decky-virtual-surround-sound'
 
 export const restartSteamClient = (): void => {
   SteamClient.User.StartRestart(false)
@@ -96,8 +99,6 @@ const pluginSettingsKey = __PLUGIN_NAME__
 export const getPluginConfig = (): PluginConfig => {
   const defaultConfig: PluginConfig = {
     configVersion: currentConfigVersion,
-    notesAcknowledgedV2: false,
-    hrirName: 'HRTF from Aureal Vortex 2 - WIP v2',
     channelCount: 8,
     usePerAppProfiles: false,
     perAppProfiles: {

@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react'
 import type { PluginPage } from '../interfaces'
 import PluginConfigView from './views/PluginConfigView'
 import AudioControlsView from './views/AudioControlsView'
-import { Footer } from './elements/AuthorFooter'
 
 
 const QuickAccessMenuRouter: React.FC = () => {
@@ -28,9 +27,6 @@ const QuickAccessMenuRouter: React.FC = () => {
           onChangePage={changePage}
         />
       )}
-
-      {/* Footer */}
-      <Footer />
     </div>
   )
 

@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DeckSettings/decky-virtual-surround-sound.git"
+    "url": "git+https://github.com/lumen-tools/decky-virtual-surround-sound.git"
   },
   "keywords": [
     "audio",
@@ -26,12 +26,12 @@
     "dolby",
     "atmos"
   ],
-  "author": "Josh.5 <jsunnex@gmail.com>",
+  "author": "lumen-tools (based on the original by Josh.5 <jsunnex@gmail.com>)",
   "license": "BSD-3-Clause",
   "bugs": {
-    "url": "https://github.com/DeckSettings/decky-virtual-surround-sound/issues"
+    "url": "https://github.com/lumen-tools/decky-virtual-surround-sound/issues"
   },
-  "homepage": "https://github.com/DeckSettings/decky-virtual-surround-sound#readme",
+  "homepage": "https://github.com/lumen-tools/decky-virtual-surround-sound#readme",
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.1",

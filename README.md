@@ -1,3 +1,5 @@
+> **Fork notice:** This is a fork of [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5, maintained by [lumen-tools](https://github.com/lumen-tools/decky-virtual-surround-sound).
+
 # Decky Virtual Surround Sound
 
 [![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg)](https://streamingtech.co.nz/discord)

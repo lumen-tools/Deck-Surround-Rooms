@@ -1,8 +1,6 @@
 export interface PluginConfig {
   configVersion?: number;
   installationId?: string;
-  notesAcknowledgedV2: boolean;
-  hrirName: string;
   channelCount: number;
   usePerAppProfiles?: boolean;
   // Map an app's display name to its mixer profile
@@ -44,7 +42,13 @@ export type PluginPage = 'audio_controls' | 'plugin_config';
 export interface HrirFile {
   label: string;
   path: string;
-  channel_count?: string;
+  channel_count?: number | null;
+  active?: boolean;
+}
+
+export interface Source {
+  name: string;
+  status: 'surround' | 'direct' | 'pinned';
 }
 
 export interface SinkInputFormat {

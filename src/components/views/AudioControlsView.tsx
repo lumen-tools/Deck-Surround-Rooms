@@ -1,36 +1,37 @@
 import {
-  staticClasses,
+  ButtonItem,
   DialogButton,
+  Dropdown,
+  Field,
+  Focusable,
   PanelSection,
   PanelSectionRow,
-  Focusable, ToggleField, SliderField, Router, Spinner, ButtonItem,
+  Router,
+  SliderField,
+  ToggleField,
 } from '@decky/ui'
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import {
-  MixerProfile,
-  PluginConfig,
-  PluginPage,
-  RunningApp,
-  Sink,
-  SinkInput,
-  SinkInputConsolidated,
-  SinkInputFormat,
-} from '../../interfaces'
-import { MdOutlineWarningAmber, MdSettings } from 'react-icons/md'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { MdSettings } from 'react-icons/md'
 import { call } from '@decky/api'
+import { HrirFile, MixerProfile, PluginConfig, PluginPage, RunningApp, Source } from '../../interfaces'
 import {
   defaultMixerProfile,
   defaultMixerVolumes,
   getCurrentMixerProfile,
   getMixerChannels,
-  getPluginConfig, setMixerProfileInBackend,
+  getPluginConfig,
+  setMixerProfileInBackend,
   setPluginConfig,
 } from '../../constants'
-import { popupVssHelpDialog } from '../elements/VssHelpDialog'
-
 
 interface AudioControlsViewProps {
   onChangePage: (page: PluginPage) => void
+}
+
+const statusLabel: Record<Source['status'], string> = {
+  surround: 'Surround',
+  direct: 'Stereo',
+  pinned: 'Own output',
 }
 
 const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) => {
@@ -42,122 +43,44 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
   const [mixerVolumes, setMixerVolumes] = useState<{ [code: string]: number }>(
     defaultMixerProfile.volumes,
   )
-  const [sinkInputList, setSinkInputList] = useState<SinkInputConsolidated[]>([])
-  const [sinkLookup, setSinkLookup] = useState<Record<number, Sink>>({})
-  const [surroundSinkDefault, setSurroundSinkDefault] = useState<boolean>(false)
-  const [isApplicationListLoading, setIsApplicationListLoading] = useState<boolean>(true)
-  const [hasLoadedApplicationList, setHasLoadedApplicationList] = useState<boolean>(false)
-  const updateApplicationList = async () => {
-    setIsApplicationListLoading(true)
-    // First get the current running app
+  const [surroundEnabled, setSurroundEnabled] = useState<boolean | null>(null)
+  const [sources, setSources] = useState<Source[]>([])
+  const [hrirFiles, setHrirFiles] = useState<HrirFile[]>([])
+  const [isApplyingHrir, setIsApplyingHrir] = useState<boolean>(false)
+
+  const refreshState = async () => {
     const currentRunningApp = Router.MainRunningApp
-    if (currentRunningApp) {
-      setRunningApp({
-        display_name: currentRunningApp.display_name,
-      })
-    } else {
-      setRunningApp(null)
-    }
-    // Second try to list all current sink inputs from backend
+    setRunningApp(currentRunningApp ? { display_name: currentRunningApp.display_name } : null)
     try {
-      const sinkInputs = await call<[], SinkInput[]>('list_sink_inputs')
-      const sinks = await call<[], Sink[]>('list_sinks')
-      const surroundSinkDefaultFlag = await call<[], boolean>('get_surround_sink_default')
-
-      const sinkInfoMap: Record<number, Sink> = {}
-      if (Array.isArray(sinks)) {
-        sinks.forEach((sinkEntry) => {
-          if (typeof sinkEntry.index !== 'number') {
-            return
-          }
-          sinkInfoMap[sinkEntry.index] = sinkEntry
-        })
-      }
-      setSinkLookup(sinkInfoMap)
-      setSurroundSinkDefault(!!surroundSinkDefaultFlag)
-
-      if (!sinkInputs) {
-        setSinkInputList([])
-        return
-      }
-
-      const enabledApps = await call<[], string[]>('get_enabled_apps_list') ?? []
-
-      // Consolidate sink inputs by app name.
-      const appMap = new Map<string, SinkInputConsolidated>()
-      sinkInputs.forEach((input) => {
-        if (typeof input.index !== 'number') {
-          return
-        }
-        const appName = input.name?.trim()
-        if (!appName) {
-          return
-        }
-        const enabled = enabledApps.includes(appName)
-        const targetObject = input.target_object ?? ''
-        const volumeSummary = input.volume ?? ''
-        const formatInfo: SinkInputFormat = input.format ?? {
-          format: 'Unknown',
-          sample_format: '',
-          rate: '',
-          channels: '',
-          channel_map: [],
-        }
-        const sinkIndex = typeof input.sink === 'number' ? input.sink : undefined
-        if (appMap.has(appName)) {
-          const existingApp = appMap.get(appName)!
-          const hasFormat = existingApp.formats.some(f =>
-            f.format === formatInfo.format &&
-            f.sample_format === formatInfo.sample_format &&
-            f.rate === formatInfo.rate &&
-            f.channels === formatInfo.channels &&
-            (f.channel_map || []).join(',') === (formatInfo.channel_map || []).join(','),
-          )
-          if (!hasFormat) {
-            existingApp.formats.push(formatInfo)
-          }
-          existingApp.index = Math.min(existingApp.index, input.index)
-          existingApp.volume = volumeSummary || existingApp.volume
-          existingApp.target_object = targetObject || existingApp.target_object
-          existingApp.enabled = enabled
-          if (typeof sinkIndex === 'number') {
-            existingApp.sink = sinkIndex
-          }
-        } else {
-          // First occurrence of this app, create a new consolidated entry
-          appMap.set(appName, {
-            name: appName,
-            index: input.index,
-            formats: [formatInfo],
-            volume: volumeSummary,
-            target_object: targetObject,
-            enabled,
-            sink: sinkIndex,
-            connectedToVirtualSurroundSink: false,
-          })
-        }
-      })
-      const consolidatedApps = Array.from(appMap.values())
-      if (consolidatedApps.length > 0) {
-        const connectionStatuses = await Promise.all(consolidatedApps.map(async (entry) => {
-          try {
-            const result = await call<[string], boolean>('is_app_connected_to_virtual_surround_sink', entry.name)
-            return !!result
-          } catch (error) {
-            console.error(`[decky-virtual-surround-sound:AudioControlsView] Error checking virtual sink for ${entry.name}:`, error)
-            return false
-          }
-        }))
-        consolidatedApps.forEach((entry, index) => {
-          entry.connectedToVirtualSurroundSink = connectionStatuses[index]
-        })
-      }
-      setSinkInputList(consolidatedApps)
+      setSurroundEnabled(!!(await call<[], boolean>('get_surround_enabled')))
+      setSources((await call<[], Source[]>('get_sources')) ?? [])
     } catch (error) {
-      console.error('[decky-virtual-surround-sound:AudioControlsView] Error fetching app details:', error)
+      console.error('[decky-virtual-surround-sound:AudioControlsView] Error refreshing state:', error)
+    }
+  }
+
+  const loadHrirFiles = async () => {
+    try {
+      setHrirFiles((await call<[], HrirFile[]>('get_hrir_file_list')) ?? [])
+    } catch (error) {
+      console.error('[decky-virtual-surround-sound:AudioControlsView] Error loading HRIR list:', error)
+    }
+  }
+
+  const toggleSurround = async (enabled: boolean) => {
+    setSurroundEnabled(enabled)
+    await call<[enabled: boolean], boolean>('set_surround_enabled', enabled)
+    await refreshState()
+  }
+
+  const selectHrir = async (path: string) => {
+    setIsApplyingHrir(true)
+    setHrirFiles((files) => files.map((file) => ({ ...file, active: file.path === path })))
+    try {
+      await call<[path: string], boolean>('set_hrir_file', path)
     } finally {
-      setIsApplicationListLoading(false)
-      setHasLoadedApplicationList(true)
+      setIsApplyingHrir(false)
+      await loadHrirFiles()
     }
   }
 
@@ -269,241 +192,77 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     channelDebounceRef.current.set(channel, { timer, value })
   }
 
-  const getSinkLabelForIndex = useCallback(
-    (sinkIndex?: number): string => {
-      if (sinkIndex === undefined || sinkIndex === null) {
-        return 'the system default output'
-      }
-      const sinkInfo = sinkLookup[sinkIndex]
-      if (sinkInfo) {
-        const description = sinkInfo.description?.trim()
-        if (description) {
-          return description
-        }
-        const name = sinkInfo.name?.trim()
-        if (name) {
-          return name
-        }
-      }
-      return `Sink #${sinkIndex}`
-    },
-    [sinkLookup],
-  )
-
-  const handleAppSelect = async (app: SinkInputConsolidated, enabled: boolean) => {
-    console.log(`[decky-virtual-surround-sound:AudioControlsView] Setting app to state ${enabled} [Title:${app.name}]`)
-    if (!currentConfig?.notesAcknowledgedV2) {
-      console.log(`[decky-virtual-surround-sound:AudioControlsView] Divert to first display warnings dialog.`)
-      popupVssHelpDialog(() => {
-        console.log(`[decky-virtual-surround-sound:AudioControlsView] Reloading settings.`)
-        setCurrentConfig(getPluginConfig())
-      })
-      return
-    }
-    if (app.target_object.trim() !== '') return
-    try {
-      if (enabled) {
-        await call<[string], boolean>('enable_for_app', app.name)
-      } else {
-        await call<[string], boolean>('disable_for_app', app.name)
-      }
-      await updateApplicationList()
-    } catch (error) {
-      console.error(`[decky-virtual-surround-sound:AudioControlsView] Error toggling app ${app.name}:`, error)
-    }
-  }
 
   useEffect(() => {
     setCurrentConfig(getPluginConfig())
-    updateApplicationList()
+    refreshState()
+    loadHrirFiles()
     updateMixerProfile()
-    // Add loop to update options
-    const interval = setInterval(() => {
-      updateApplicationList()
-      //updateMixerProfile(); // Not sure if this needs to be updated. Probably only needs to be run once on load.
-    }, 5000)
+    const interval = setInterval(refreshState, 5000)
     return () => clearInterval(interval)
   }, [])
 
+  const activeHrir = hrirFiles.find((file) => file.active)
+
   return (
     <>
-      <div>
-        <div style={{ padding: '3px 16px 3px 16px', margin: 0 }}>
-          <Focusable style={{ display: 'flex', alignItems: 'stretch', gap: '1rem', height: '26px' }}
-            flow-children="horizontal">
-            <DialogButton
-              // @ts-ignore
-              autoFocus={true}
-              retainFocus={true}
-              style={{
-                width: '73px',
-                minWidth: '73px',
-                padding: '3px',
-                fontSize: '14px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '1rem',
-              }}
-              onClick={() => onChangePage('plugin_config')}>
-              <MdSettings />
-            </DialogButton>
-          </Focusable>
-        </div>
-        <hr />
+      <div style={{ padding: '3px 16px', margin: 0 }}>
+        <Focusable style={{ display: 'flex', justifyContent: 'flex-end', height: '26px' }} flow-children="horizontal">
+          <DialogButton
+            style={{ width: '40px', minWidth: '40px', padding: '3px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => onChangePage('plugin_config')}
+          >
+            <MdSettings />
+          </DialogButton>
+        </Focusable>
       </div>
 
-      {sinkInputList.length === 0 ? (
-        isApplicationListLoading && !hasLoadedApplicationList ? (
-          <div style={{
-            textAlign: 'center',
-            fontSize: '0.8rem',
-            color: '#aaa',
-            marginTop: '10px',
-            padding: '10px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '8px',
-          }}>
-            <Spinner style={{ height: '30px', width: '30px', color: '#aaa' }} />
-            Finding active audio sources...
-          </div>
-        ) : (
-          <div style={{
-            textAlign: 'center',
-            fontSize: '0.8rem',
-            color: '#aaa',
-            marginTop: '10px',
-            padding: '10px',
-          }}>
-            🎵 No active applications are playing audio right now.
-          </div>
-        )
-      ) : (
-        <>
-          <div className={staticClasses.PanelSectionTitle} style={{ marginLeft: '10px' }}>Sources</div>
-          {sinkInputList.map((app) => {
-            const targetObjectValue = (app.target_object ?? '').trim()
-            const sinkIndex = app.sink
-            const isConnectedToVirtualSink = !!app.connectedToVirtualSurroundSink
-            const isDefaultVirtualRoute = surroundSinkDefault && isConnectedToVirtualSink && !targetObjectValue
-            const sinkLabel = getSinkLabelForIndex(sinkIndex)
-            const sinkSuffix = isDefaultVirtualRoute ? ' (default output)' : ''
-            const sinkStatusLabel = targetObjectValue
-              ? 'App explicitly pins its output target; change this within the application.'
-              : `Connected to ${sinkLabel}${sinkSuffix}`
-            const toggleDescription = targetObjectValue
-              ? 'This app routes audio to a locked sink; edit the app to change where it sends audio.'
-              : isDefaultVirtualRoute
-                ? 'Virtual Surround Sound is already the default output sink for this app.'
-                : 'Enable Virtual Surround Sound filter for this app'
-            return (
-              <PanelSection key={app.index} title={app.name}>
-                <PanelSectionRow>
-                  <div style={{
-                    padding: 0,
-                    margin: 0,
-                    borderLeft: 'thin dotted',
-                  }}>
-                    <ul style={{
-                      listStyle: 'none',
-                      fontSize: '0.7rem',
-                      margin: 0,
-                      paddingLeft: '5px',
-                      paddingRight: 0,
-                      paddingTop: 0,
-                      paddingBottom: '3px',
-                    }}>
-                      {app.formats.map((format, index) => (
-                        <li key={index}
-                          style={{
-                            display: 'table',
-                            textAlign: 'right',
-                            width: '100%',
-                            borderBottom: '1px solid #333',
-                            paddingTop: '2px',
-                            paddingBottom: '2px',
-                          }}>
-                          <strong style={{
-                            display: 'table-cell',
-                            textAlign: 'left',
-                            paddingRight: '3px',
-                          }}>Audio #{index}:</strong>
-                          {format.format}_{format.sample_format}, {format.rate}Hz, {format.channels} channels
-                        </li>
-                      ))}
-                      {targetObjectValue !== '' && (
-                        <li style={{
-                          display: 'table',
-                          textAlign: 'left',
-                          width: '100%',
-                          borderBottom: '1px solid #333',
-                          paddingTop: '2px',
-                          paddingBottom: '2px',
-                        }}>
-                          <MdOutlineWarningAmber style={{ color: 'orange', marginRight: '3px' }} />
-                          <strong> NOTE: </strong>
-                          This app has specifically targeted an output and cannot be edited here.
-                          Try editing audio output from within the app.
-                        </li>
-                      )}
-                    </ul>
-                    <div style={{
-                      margin: 0,
-                      paddingLeft: '5px',
-                      paddingRight: '5px',
-                      paddingTop: 0,
-                      paddingBottom: 0,
-                      overflow: 'hidden',
-                    }}>
-                      <ToggleField
-                        label="Enable"
-                        description={toggleDescription}
-                        checked={app.enabled || isConnectedToVirtualSink}
-                        onChange={(e) => {
-                          handleAppSelect(app, e)
-                        }}
-                        disabled={targetObjectValue !== '' || isDefaultVirtualRoute}
-                      />
-                      <div style={{
-                        fontSize: '0.7rem',
-                        color: '#aaa',
-                        marginTop: '3px',
-                        whiteSpace: 'normal',
-                      }}>
-                        {sinkStatusLabel}
-                      </div>
-                    </div>
-                  </div>
-                </PanelSectionRow>
-              </PanelSection>
-            )
-          })}
-        </>
-      )}
-      <hr />
-      <div className={staticClasses.PanelSectionTitle} style={{ marginLeft: '10px' }}>Filter Settings</div>
       <PanelSection>
         <PanelSectionRow>
-          {/*TODO: Add app icon*/}
-          {/*<div>Using {profile} profile</div>*/}
           <ToggleField
-            label="Use per-game profile"
-            description={`Using ${profile} profile`}
-            checked={usePerAppProfiles}
-            disabled={(runningApp === null)}
-            onChange={(e) => {
-              togglePerAppProfiles(e)
-            }}
+            label="Virtual Surround"
+            checked={!!surroundEnabled}
+            disabled={surroundEnabled === null}
+            onChange={(enabled) => toggleSurround(enabled)}
           />
         </PanelSectionRow>
+        <PanelSectionRow>
+          <Field label="HRTF" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
+            <Dropdown
+              rgOptions={hrirFiles.map((file) => ({ label: file.label, data: file.path }))}
+              selectedOption={activeHrir?.path}
+              strDefaultLabel="Select HRTF"
+              disabled={isApplyingHrir || hrirFiles.length === 0}
+              onChange={(option) => selectHrir(option.data)}
+            />
+          </Field>
+        </PanelSectionRow>
       </PanelSection>
-      <div className={staticClasses.PanelSectionTitle} style={{ marginLeft: '10px' }}>Mixer</div>
-      <PanelSection>
-        {/*Volume mixer. The slider is placed below its label: the previous inline layout (icon + long
-        label + slider + value box in one row) was wider than the Quick Access Menu and pushed the whole
-        panel to the right.*/}
+
+      {sources.length > 0 && (
+        <PanelSection title="Sources">
+          {sources.map((source) => (
+            <PanelSectionRow key={source.name}>
+              <Field label={source.name} bottomSeparator="none" padding="compact">
+                <span style={{ fontSize: '12px', color: source.status === 'surround' ? '#1a9fff' : '#8b929a' }}>
+                  {statusLabel[source.status]}
+                </span>
+              </Field>
+            </PanelSectionRow>
+          ))}
+        </PanelSection>
+      )}
+
+      <PanelSection title="Mixer">
+        {runningApp && (
+          <PanelSectionRow>
+            <ToggleField
+              label="Per-game profile"
+              checked={usePerAppProfiles}
+              onChange={(enabled) => togglePerAppProfiles(enabled)}
+            />
+          </PanelSectionRow>
+        )}
         {channels.map(({ code, label }) => (
           <PanelSectionRow key={code}>
             <SliderField
@@ -512,21 +271,19 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
               step={5}
               notchCount={4}
               notchTicksVisible={false}
-              label={`${label} (${code})`}
+              label={label}
               showValue
               valueSuffix="%"
               resetValue={100}
               bottomSeparator="none"
               value={mixerVolumes[code] ?? 100}
-              onChange={(value: number) => {
-                handleVolumeChange(code, value)
-              }}
+              onChange={(value: number) => handleVolumeChange(code, value)}
             />
           </PanelSectionRow>
         ))}
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => resetMixerVolumes()}>
-            Reset all channels to 100%
+            Reset mixer
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>

@@ -171,6 +171,30 @@ HRIR_SPEAKER_CHANNELS = {
 }
 
 
+# Display names for the bundled HRIR presets (file names are kept unchanged on disk).
+HRIR_DISPLAY_NAMES = {
+    "HRTF from Aureal Vortex 2 - WIP v2": "Aureal Vortex 2",
+    "DTS Headphone": "DTS Headphone",
+    "Dolby Atmos 7.1 virtual surround sound for headphones": "Dolby Atmos",
+    "EAC Default HRTF (35°-100°-150°)": "EAC Default",
+    "KEMAR (with shoulders) generated with Mesh2HRTF, a free and robust HRTF generator": "KEMAR (Mesh2HRTF)",
+    "OpenAL Soft default HRTF": "OpenAL Soft",
+    "Razer Surround": "Razer Surround",
+    "Razer Surround with fixed upper bass": "Razer Surround (Bass Fix)",
+    "Realtek 7.1 Headphone Virtualization": "Realtek Headphone",
+    "Steam Audio": "Steam Audio",
+    "Windows Sonic 7.1 virtual surround sound for headphones": "Windows Sonic",
+}
+
+
+def hrir_display_name(path: str) -> str:
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if stem in HRIR_DISPLAY_NAMES:
+        return HRIR_DISPLAY_NAMES[stem]
+    # Custom files: make the file name readable.
+    return re.sub(r"[_\s]+", " ", stem).strip()
+
+
 class UnsupportedHrirError(Exception):
     pass
 
@@ -698,103 +722,79 @@ class Plugin:
         settings.setSetting("hrir_prepared_version", HRIR_PREPARE_VERSION)
         return True
 
+    # ---- Master switch -------------------------------------------------------------------------
+    #
+    # One switch controls everything:
+    #   ON  -> "Virtual Surround Sound" is the default output and every app (that does not pin its own
+    #          output device) is moved onto it.
+    #   OFF -> the real output device is the default and every app is moved back onto it.
+    # Older versions had a separate "use as default sink" option plus a per-app "Enable" switch, which
+    # left already running apps on the real device even though surround was the default.
+
+    INTERNAL_STREAM_BINARIES = {"pw-cli", "speaker-test"}
+
+    async def get_surround_enabled(self) -> bool:
+        return bool(settings.getSetting("surround_enabled", settings.getSetting("surround_sink_default", True)))
+
+    async def set_surround_enabled(self, enabled: bool) -> bool:
+        decky.logger.info("Virtual surround %s", "enabled" if enabled else "disabled")
+        settings.setSetting("surround_enabled", bool(enabled))
+        await self.check_state()
+        return True
+
+    # Kept for the CLI
     async def get_surround_sink_default(self):
-        """Checks if the Virtual Surround Sound sink should be the default"""
-        return settings.getSetting("surround_sink_default", True)
+        return await self.get_surround_enabled()
 
     async def enable_surround_sink_default(self):
-        """Sets the Virtual Surround Sound sink as the default"""
-        decky.logger.info("Enabling Virtual Surround Sound as the default sink")
-        settings.setSetting("surround_sink_default", True)
-        await self.check_state()
-        return True
+        return await self.set_surround_enabled(True)
 
     async def disable_surround_sink_default(self):
-        """Disables the Virtual Surround Sound sink as the default"""
-        decky.logger.info("Removing Virtual Surround Sound as the default sink")
-        settings.setSetting("surround_sink_default", False)
-        await self.check_state()
-        return True
+        return await self.set_surround_enabled(False)
 
-    async def get_enabled_apps_list(self):
-        """Reads the current list of enabled apps"""
-        return settings.getSetting("enabled_apps", [])
+    def _is_internal_stream(self, sink_input: dict) -> bool:
+        """Streams of the plugin itself (filter outputs, sound test) must never be re-routed."""
+        props = self._sink_input_properties(sink_input)
+        if str(props.get("node.autoconnect", "")).lower() == "false":
+            return True
+        node_name = str(props.get("node.name", ""))
+        if node_name.startswith("output.vss-filter") or node_name.startswith("output.virtual-surround-sound"):
+            return True
+        return props.get("application.process.binary") in self.INTERNAL_STREAM_BINARIES
 
-    async def enable_for_app(self, app_name: str):
-        """Adds a given app name to the list of enabled apps"""
-        decky.logger.info("Enabling Virtual Surround Sound for app %s", app_name)
-        enabled_apps = settings.getSetting("enabled_apps", [])
-        if app_name not in enabled_apps:
-            enabled_apps.append(app_name)
-            settings.setSetting("enabled_apps", enabled_apps)
-            decky.logger.info("App %s enabled.", app_name)
-            await self.check_state()
-        else:
-            decky.logger.info("App %s was already enabled.", app_name)
-        return True
-
-    async def disable_for_app(self, app_name: str):
-        """Removes a given app name from the list of enabled apps"""
-        decky.logger.info("Disabling Virtual Surround Sound for app %s", app_name)
-        enabled_apps = settings.getSetting("enabled_apps", [])
-        if app_name in enabled_apps:
-            updated_list = [a for a in enabled_apps if a != app_name]
-            settings.setSetting("enabled_apps", updated_list)
-            decky.logger.info("App %s disabled.", app_name)
-            await self.check_state()
-        else:
-            decky.logger.info("App %s was not enabled.", app_name)
-        return True
-
-    async def is_app_connected_to_virtual_surround_sink(self, app_name: str) -> bool:
-        """Determines if the given app is currently routed to the Virtual Surround Sound sink."""
-        if not isinstance(app_name, str):
-            return False
-        target_name = app_name.strip()
-        if not target_name:
-            return False
-        try:
-            filter_name, device_name = await get_virtual_surround_sink_names()
-            if not filter_name or not device_name:
-                decky.logger.error("Unable to resolve virtual surround sink names")
-                return False
-            sinks = await self.list_sinks()
-            virtual_sink_indices: set[int] = set()
-            for sink in sinks:
-                sink_index = self._sink_index_from_entry(sink)
-                if sink_index is None:
-                    continue
-                sink_name = sink.get("name")
-                if sink_name == device_name or sink_name == filter_name:
-                    virtual_sink_indices.add(sink_index)
-
-            if not virtual_sink_indices:
-                return False
-
-            sink_inputs = await self.list_sink_inputs()
-            normalized_target = target_name.lower()
-            for sink_input in sink_inputs:
-                entry_name = sink_input.get("name")
-                candidate_names: list[str] = []
-                if isinstance(entry_name, str):
-                    candidate_names.append(entry_name.strip())
-                canonical_name = self._sink_input_app_name(sink_input)
-                if canonical_name:
-                    candidate_names.append(canonical_name.strip())
-                if not candidate_names:
-                    continue
-                if not any((name or '').lower() == normalized_target for name in candidate_names if name):
-                    continue
-                sink_index = self._parse_int(sink_input.get("sink"), -1)
-                if sink_index in virtual_sink_indices:
-                    return True
-        except Exception as exc:
-            decky.logger.error("Error checking virtual sink connection for %s: %s", app_name, exc)
-        return False
+    async def get_sources(self) -> list[dict]:
+        """
+        Apps currently playing audio, for display in the UI.
+        status: "surround" (routed through the filter), "direct" (real device) or "pinned"
+        (the app selected an output itself, the plugin does not move it).
+        """
+        filter_name, device_name = await get_virtual_surround_sink_names()
+        sinks = await self.list_sinks() or []
+        surround_indices = {
+            self._sink_index_from_entry(sink) for sink in sinks
+            if sink.get("name") in (filter_name, device_name)
+        }
+        sources: dict[str, str] = {}
+        rank = {"surround": 0, "pinned": 1, "direct": 2}
+        for sink_input in await self.list_sink_inputs() or []:
+            if self._is_internal_stream(sink_input):
+                continue
+            name = sink_input.get("name") or self._sink_input_app_name(sink_input)
+            if not name:
+                continue
+            if self._parse_int(sink_input.get("sink"), -1) in surround_indices:
+                status = "surround"
+            elif self._sink_input_target_object(sink_input).strip():
+                status = "pinned"
+            else:
+                status = "direct"
+            # An app with several streams counts as surround if any stream is.
+            if name not in sources or rank[status] < rank[sources[name]]:
+                sources[name] = status
+        return [{"name": name, "status": status} for name, status in sorted(sources.items())]
 
     async def check_state(self):
         settings.read()
-        enabled_apps = await self.get_enabled_apps_list()
         sinks = await self.list_sinks() or []
         sink_inputs = await self.list_sink_inputs()
         if not isinstance(sink_inputs, list):
@@ -847,9 +847,8 @@ class Plugin:
         if default_sink_id is None or default_sink_index is None:
             decky.logger.warning("Unable to determine fallback default sink; leaving default unchanged.")
 
-        # Ensure that the "Virtual Surround Sound" is default
-        use_surround_sink_as_default = await self.get_surround_sink_default()
-        if use_surround_sink_as_default:
+        surround_enabled = await self.get_surround_enabled()
+        if surround_enabled:
             if virtual_surround_device_object_id is not None:
                 await self.set_default_sink(virtual_surround_device_object_id)
             else:
@@ -860,53 +859,31 @@ class Plugin:
             else:
                 decky.logger.warning("Default sink id not resolved; cannot update default sink.")
 
-        # Loop over each sink input and check its assignment.
         surround_sink_indices: set[int] = set()
         if virtual_surround_index is not None:
             surround_sink_indices.add(virtual_surround_index)
         if virtual_surround_device_index is not None:
             surround_sink_indices.add(virtual_surround_device_index)
         for sink_input in sink_inputs:
-            target_object = self._sink_input_target_object(sink_input)
-            if target_object.strip():
+            if self._is_internal_stream(sink_input):
                 continue
-
-            app_name = self._sink_input_app_name(sink_input)
-            if not app_name:
+            # Apps that picked their output device themselves are left alone.
+            if self._sink_input_target_object(sink_input).strip():
                 continue
-
-            current_sink_index = sink_input.get('sink')
-            # If the app is in the enabled_apps list,
-            # it should be assigned to the Virtual Surround Sound sink.
-            if app_name in enabled_apps:
-                if virtual_surround_target_index is None:
-                    decky.logger.warning(
-                        "Unable to assign %s to Virtual Surround Sound: sink index unavailable.",
-                        app_name,
-                    )
+            app_name = self._sink_input_app_name(sink_input) or f"sink input {sink_input.get('index')}"
+            current_sink_index = self._parse_int(sink_input.get('sink'), -1)
+            if surround_enabled:
+                if virtual_surround_target_index is None or current_sink_index in surround_sink_indices:
                     continue
-                if current_sink_index != virtual_surround_target_index:
-                    decky.logger.info(
-                        "Moving %s (sink input %s) to Virtual Surround Sound (sink %s)",
-                        app_name, sink_input['index'], virtual_surround_target_index
-                    )
-                    await self.set_sink_for_application(sink_input['index'], virtual_surround_target_index)
+                decky.logger.info("Moving %s (sink input %s) to Virtual Surround Sound (sink %s)",
+                                  app_name, sink_input['index'], virtual_surround_target_index)
+                await self.set_sink_for_application(sink_input['index'], virtual_surround_target_index)
             else:
-                # If the app is not enabled but is currently assigned to the Virtual Surround Sound sink,
-                # move it to the Virtual Sink unless the VSS device is currently the default sink.
-                if current_sink_index in surround_sink_indices:
-                    if use_surround_sink_as_default:
-                        continue
-                    if default_sink_index is None:
-                        decky.logger.warning(
-                            "Default sink index unresolved; cannot move %s to fallback sink.", app_name
-                        )
-                        continue
-                    decky.logger.info(
-                        "Moving %s (sink input %s) to fallback sink (sink %s)",
-                        app_name, sink_input['index'], default_sink_index
-                    )
-                    await self.set_sink_for_application(sink_input['index'], default_sink_index)
+                if current_sink_index not in surround_sink_indices or default_sink_index is None:
+                    continue
+                decky.logger.info("Moving %s (sink input %s) to the output device (sink %s)",
+                                  app_name, sink_input['index'], default_sink_index)
+                await self.set_sink_for_application(sink_input['index'], default_sink_index)
 
     async def get_hrir_file_list(self) -> list[dict[str, str | None | int]] | None:
         """Lists available HRIR files with channel count."""
@@ -915,13 +892,14 @@ class Plugin:
             filepath = os.path.join(hrir_directory, filename)
             if filename.endswith(".wav") and os.path.isfile(filepath):
                 hrir_files.append({
-                    "label": os.path.basename(filepath)[:-4],
+                    "label": hrir_display_name(filepath),
                     "path": filepath,
                     "channel_count": wav_channel_count(filepath),
                 })
-        if hrir_files:
-            hrir_files.sort(key=lambda x: (x["channel_count"] is not None, x["channel_count"] or 0, x["path"]),
-                            reverse=False)
+        active_path = settings.getSetting("hrir_source_path", os.path.join(hrir_directory, default_hrir_file))
+        for entry in hrir_files:
+            entry["active"] = entry["path"] == active_path
+        hrir_files.sort(key=lambda x: x["label"].lower())
         return hrir_files
 
     async def set_hrir_file(self, selected_hrir_path: str) -> bool:
@@ -960,8 +938,7 @@ class Plugin:
         decky.logger.info("Resetting plugin to defaults")
         ok = True
         await self._stop_running_sound_test()
-        settings.setSetting("surround_sink_default", True)
-        settings.setSetting("enabled_apps", [])
+        settings.setSetting("surround_enabled", True)
         try:
             if os.path.exists(hrir_original_backup_path):
                 os.remove(hrir_original_backup_path)
@@ -1848,8 +1825,7 @@ class CLIMenu:
             ("List running apps (sink inputs)", self.list_sink_inputs_action),
             ("Get highest priority sink", self.highest_priority_sink_action),
             ("Get default sink", self.default_sink_action),
-            ("Toggle app Virtual Surround Sound", self.toggle_app_virtual_surround_action),
-            ("Toggle Virtual Surround Sound as default sink", self.toggle_default_surround_action),
+            ("Toggle Virtual Surround Sound on/off", self.toggle_default_surround_action),
             ("List HRIR files", self.list_hrir_files_action),
             ("Set HRIR file", self.set_hrir_file_action),
             ("List SOFA files", self.list_sofa_files_action),
@@ -1962,51 +1938,14 @@ class CLIMenu:
         lines = self.helper.lines_for_default_sink(self.plugin)
         self._show_scrollable_text(stdscr, "Default Sink", lines)
 
-    def toggle_app_virtual_surround_action(self, stdscr):
-        sink_inputs = self.helper.run(self.plugin.list_sink_inputs())
-        if not sink_inputs:
-            self._show_message(stdscr, "Toggle App", "No running apps detected.")
-            return
-        grouped: dict[str, list[dict]] = {}
-        canonical_for_name: dict[str, str] = {}
-        for entry in sink_inputs:
-            display_name = entry.get("name") or self.plugin._sink_input_app_name(
-                entry) or f"Sink Input {entry.get('index')}"
-            canonical_name = self.plugin._sink_input_app_name(entry) or display_name
-            canonical_for_name.setdefault(display_name, canonical_name)
-            grouped.setdefault(display_name, []).append(entry)
-        enabled_apps = self.helper.run(self.plugin.get_enabled_apps_list()) or []
-        app_names = sorted(grouped.keys())
-        labels = []
-        for name in app_names:
-            canonical = canonical_for_name.get(name, name)
-            status = "Enabled" if canonical in enabled_apps else "Disabled"
-            labels.append(f"{name} [{status}] - {len(grouped[name])} stream(s)")
-        selection = self._navigate_menu(
-            stdscr,
-            "Toggle Virtual Surround Sound for App",
-            labels,
-            "↑/↓ navigate • Enter toggle • q back"
-        )
-        if selection is None:
-            return
-        chosen = app_names[selection]
-        canonical_chosen = canonical_for_name.get(chosen, chosen)
-        if canonical_chosen in enabled_apps:
-            self.helper.run(self.plugin.disable_for_app(canonical_chosen))
-            self._show_message(stdscr, "Toggle App", f"'{chosen}' disabled for Virtual Surround Sound.")
-        else:
-            self.helper.run(self.plugin.enable_for_app(canonical_chosen))
-            self._show_message(stdscr, "Toggle App", f"'{chosen}' enabled for Virtual Surround Sound.")
-
     def toggle_default_surround_action(self, stdscr):
         current = bool(self.helper.run(self.plugin.get_surround_sink_default()))
         if current:
             self.helper.run(self.plugin.disable_surround_sink_default())
-            self._show_message(stdscr, "Default Sink Toggle", "Virtual Surround Sound is no longer the default sink.")
+            self._show_message(stdscr, "Virtual Surround", "Virtual Surround Sound is now off.")
         else:
             self.helper.run(self.plugin.enable_surround_sink_default())
-            self._show_message(stdscr, "Default Sink Toggle", "Virtual Surround Sound set as the default sink.")
+            self._show_message(stdscr, "Virtual Surround", "Virtual Surround Sound is now on.")
 
     def list_hrir_files_action(self, stdscr):
         files = self.helper.run(self.plugin.get_hrir_file_list()) or []
