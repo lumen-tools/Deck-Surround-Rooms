@@ -115,7 +115,7 @@ jobs:
         uses: ncipollo/release-action@440c8c1cb0ed28b9f43e4d1d670870f059653174 #v1.16.0
         if: steps.check_version_tag_exists.outputs.exists == 'false'
         with:
-          name: "Tagged Build: ${{ steps.prepare.outputs.plugin_version }}"
+          name: "Version ${{ steps.prepare.outputs.plugin_version }}"
           body: "Versioned release"
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "./out/*.zip"
