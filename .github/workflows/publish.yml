@@ -34,7 +34,18 @@ jobs:
           echo "plugin_version=${plugin_version:?}" >> $GITHUB_OUTPUT
 
       # --
+      - name: Check Version Tag Already Exists
+        uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 #v1.6.0
+        id: check_version_tag_exists
+        with:
+          tag: ${{ steps.prepare.outputs.plugin_version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --
       - name: Append hash to plugin version
+        # Only development builds get the commit hash. A new version (no tag yet) is built as is.
+        if: steps.check_version_tag_exists.outputs.exists == 'true'
         run: |
           echo "::notice::This run was triggered by a commit. Appending the commit hash to the plugin version."  
 
@@ -102,15 +113,6 @@ jobs:
           path: out/*/
 
       # --
-      - name: Check Version Tag Already Exists
-        uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 #v1.6.0
-        id: check_version_tag_exists
-        with:
-          tag: ${{ steps.prepare.outputs.plugin_version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # --
       - name: Generate Tagged Release
         uses: ncipollo/release-action@440c8c1cb0ed28b9f43e4d1d670870f059653174 #v1.16.0
         if: steps.check_version_tag_exists.outputs.exists == 'false'
@@ -130,7 +132,7 @@ jobs:
         uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 #v1.6.0
         id: check_latest_tag_exists
         with:
-          tag: ${{ steps.prepare.outputs.plugin_version }}
+          tag: latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
