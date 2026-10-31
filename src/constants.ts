@@ -45,19 +45,35 @@ export const mergeDeep = (defaultObj: any, sourceObj: any): any => {
   return result
 }
 
+// All channels at 100%. The backend normalises the HRIR so that every virtual speaker has the same
+// loudness; any further adjustment is up to the user.
+export const defaultMixerVolumes: { [code: string]: number } = {
+  FL: 100,
+  FR: 100,
+  FC: 100,
+  LFE: 100,
+  RL: 100,
+  RR: 100,
+  SL: 100,
+  SR: 100,
+}
+
 export const defaultMixerProfile = {
   name: 'default',
   usePerAppProfile: false,
-  volumes: {
-    FL: 100,
-    FR: 100,
-    FC: 120,
-    LFE: 100,
-    RL: 80,
-    RR: 80,
-    SL: 90,
-    SR: 90,
-  },
+  volumes: { ...defaultMixerVolumes },
+}
+
+// Mixer defaults shipped by plugin versions <= 0.1.6. Note that pactl volumes are cubic, so these
+// made the rear channels ~6dB quieter and the centre ~5dB louder than the front channels.
+const legacyDefaultMixerVolumes: { [code: string]: number } = {
+  FL: 100, FR: 100, FC: 120, LFE: 100, RL: 80, RR: 80, SL: 90, SR: 90,
+}
+const currentConfigVersion = 2
+
+const volumesEqual = (a?: { [code: string]: number }, b?: { [code: string]: number }): boolean => {
+  if (!a || !b) return false
+  return Object.keys(b).every((key) => a[key] === b[key]) && Object.keys(a).length === Object.keys(b).length
 }
 
 export const generateUniqueId = (): string => {
@@ -79,6 +95,7 @@ const pluginSettingsKey = __PLUGIN_NAME__
 
 export const getPluginConfig = (): PluginConfig => {
   const defaultConfig: PluginConfig = {
+    configVersion: currentConfigVersion,
     notesAcknowledgedV2: false,
     hrirName: 'HRTF from Aureal Vortex 2 - WIP v2',
     channelCount: 8,
@@ -94,6 +111,16 @@ export const getPluginConfig = (): PluginConfig => {
       const parsedConfig = JSON.parse(dataJson)
       // Deep merge the stored config over the defaults:
       config = mergeDeep(defaultConfig, parsedConfig)
+      if (!parsedConfig.configVersion || parsedConfig.configVersion < currentConfigVersion) {
+        // Migration: replace untouched legacy mixer defaults with the new flat defaults.
+        Object.values(config.perAppProfiles ?? {}).forEach((mixerProfile) => {
+          if (volumesEqual(mixerProfile.volumes, legacyDefaultMixerVolumes)) {
+            mixerProfile.volumes = { ...defaultMixerVolumes }
+          }
+        })
+        config.configVersion = currentConfigVersion
+        window.localStorage.setItem(pluginSettingsKey, JSON.stringify(config))
+      }
     } catch (error) {
       console.error('[decky-virtual-surround-sound:constants] Failed to parse plugin config:', error)
     }
@@ -161,6 +188,10 @@ export const getCurrentMixerProfile = async (): Promise<MixerProfile> => {
   // Get selected profile. If per-app profiles are enabled, check for a profile based on the running app.
   const selectedProfileName = await getCurrentProfileFromRunningApp(currentConfig)
   // Lookup the mixer profile settings.
+  const baseVolumes = {
+    ...defaultMixerVolumes,
+    ...(currentConfig.perAppProfiles?.default?.volumes ?? {}),
+  }
   let mixerProfile: MixerProfile
   if (currentConfig.perAppProfiles &&
     currentConfig.perAppProfiles[selectedProfileName]) {
@@ -168,8 +199,14 @@ export const getCurrentMixerProfile = async (): Promise<MixerProfile> => {
   } else {
     mixerProfile = defaultMixerProfile
   }
-  // Return mixer profile
-  return mixerProfile
+  // Always return a complete set of volumes. A freshly enabled per-game profile has no volumes yet;
+  // previously that made the backend reset every channel to 100% while the UI still showed the old
+  // values, so the audible levels depended on whether a game was running.
+  return {
+    ...mixerProfile,
+    name: mixerProfile.name || selectedProfileName,
+    volumes: { ...baseVolumes, ...(mixerProfile.volumes ?? {}) },
+  }
 }
 
 export const setMixerProfileInBackend = async (mixerProfile: MixerProfile): Promise<void> => {

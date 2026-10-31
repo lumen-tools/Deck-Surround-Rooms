@@ -7,7 +7,7 @@ import {
   ToggleField,
 } from '@decky/ui'
 import { useState, useEffect, CSSProperties } from 'react'
-import { MdArrowBack, MdSurroundSound } from 'react-icons/md'
+import { MdArrowBack, MdStop, MdSurroundSound } from 'react-icons/md'
 import { SiDiscord, SiGithub, SiKofi, SiPatreon } from 'react-icons/si'
 import { HrirFile, PluginConfig } from '../../interfaces'
 import { getPluginConfig, setPluginConfig } from '../../constants'
@@ -42,11 +42,32 @@ const actionButtonStyle: CSSProperties = {
   fontSize: '12px',
 }
 
+// Speaker layout as seen from above (listener in the middle).
+const speakerGrid: (string | null)[] = [
+  'FL', 'FC', 'FR',
+  'SL', null, 'SR',
+  'RL', 'LFE', 'RR',
+]
+
+const channelButtonStyle = (active: boolean): CSSProperties => ({
+  minWidth: 0,
+  width: '100%',
+  minHeight: '28px',
+  padding: '4px 0',
+  fontSize: '12px',
+  fontWeight: active ? 700 : 400,
+  outline: active ? '2px solid #1a9fff' : undefined,
+})
+
 const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
   const [isLoading, setIsLoading] = useState(false)
   const [currentConfig, setCurrentConfig] = useState(() => getPluginConfig())
   const [hrirFileList, setHrirFileList] = useState<HrirFile[]>([])
   const [surroundSinkDefaultConfig, setSurroundSinkDefaultConfig] = useState<boolean>(false)
+  const [balanceChannels, setBalanceChannels] = useState<boolean>(true)
+  const [isApplyingHrir, setIsApplyingHrir] = useState<boolean>(false)
+  const [runningTest, setRunningTest] = useState<string | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
 
   const readBackendConfig = async () => {
     const surroundSinkDefault = await call<[], boolean[]>('get_surround_sink_default')
@@ -54,6 +75,18 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
       setSurroundSinkDefaultConfig(true)
     } else {
       setSurroundSinkDefaultConfig(false)
+    }
+    const balance = await call<[], boolean>('get_hrir_balance_channels')
+    setBalanceChannels(balance !== false)
+  }
+
+  const handleBalanceChannels = async (enabled: boolean) => {
+    setBalanceChannels(enabled)
+    setIsApplyingHrir(true)
+    try {
+      await call<[enabled: boolean], boolean>('set_hrir_balance_channels', enabled)
+    } finally {
+      setIsApplyingHrir(false)
     }
   }
 
@@ -86,7 +119,9 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
       return
     }
     const hrirPath = selectedHrir.path
+    setIsApplyingHrir(true)
     const result = await call<[hrirPath: string], boolean>('set_hrir_file', hrirPath)
+    setIsApplyingHrir(false)
     if (!result) {
       console.error('[decky-virtual-surround-sound:PluginConfigView] Error saving new HRIR file:', result)
     } else {
@@ -116,9 +151,36 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
     }
   }
 
-  const runSoundTest = async (sink: string) => {
-    console.info(`[decky-virtual-surround-sound:PluginConfigView] Exec sound test on ${sink}`)
-    await call<[original: string]>('run_sound_test', sink)
+  // sink: 'virtual-surround' (through the filter) or 'default' (real output device, no filter)
+  // channel: optional single channel code; plays the whole sequence when omitted.
+  const runSoundTest = async (sink: string, channel?: string) => {
+    const testId = `${sink}:${channel ?? 'all'}`
+    console.info(`[decky-virtual-surround-sound:PluginConfigView] Exec sound test ${testId}`)
+    setTestError(null)
+    setRunningTest(testId)
+    try {
+      const ok = await call<[sink: string, channel: string | null], boolean>('run_sound_test', sink, channel ?? null)
+      if (ok === false) {
+        // false is also returned when a test was stopped/replaced by another one.
+        setRunningTest((current) => {
+          if (current === testId) {
+            setTestError('Sound test did not complete. Check the plugin log if this keeps happening.')
+            return null
+          }
+          return current
+        })
+        return
+      }
+    } catch (error) {
+      console.error('[decky-virtual-surround-sound:PluginConfigView] Sound test failed:', error)
+      setTestError('Sound test failed.')
+    }
+    setRunningTest((current) => (current === testId ? null : current))
+  }
+
+  const stopSoundTest = async () => {
+    setRunningTest(null)
+    await call<[], boolean>('stop_sound_test')
   }
 
   useEffect(() => {
@@ -217,6 +279,26 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
               </PanelSectionRow>
 
               <PanelSectionRow>
+                <div style={fieldBlockStyle}>
+                  <ToggleField
+                    label="Balance channel levels"
+                    checked={balanceChannels}
+                    disabled={isApplyingHrir}
+                    onChange={(e) => {
+                      handleBalanceChannels(e)
+                    }}
+                  />
+                  <div style={helperTextStyle}>
+                    The HRIR presets are recorded at very different levels. Every preset is always
+                    normalised to the same overall loudness. With this option enabled, every virtual
+                    speaker is additionally levelled individually, so all channels are equally loud and
+                    left/right are symmetric. Disable it to keep the original front/side/rear balance of
+                    the preset.
+                  </div>
+                </div>
+              </PanelSectionRow>
+
+              <PanelSectionRow>
                 <div style={{
                   margin: '20px 5px 0',
                   padding: '0px 0px 8px',
@@ -232,35 +314,69 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
                 }}>Test your selected profile
                 </div>
 
-                <DialogButton
-                  style={actionButtonStyle}
-                  onClick={() => runSoundTest('virtual-surround-sound-filter')}
+                <Focusable style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <DialogButton
+                    style={actionButtonStyle}
+                    disabled={isApplyingHrir}
+                    onClick={() => runSoundTest('virtual-surround')}
+                  >
+                    <MdSurroundSound /> {runningTest === 'virtual-surround:all' ? 'Playing…' : 'Surround Enabled'}
+                  </DialogButton>
+                  <DialogButton
+                    style={actionButtonStyle}
+                    onClick={() => runSoundTest('default')}
+                  >
+                    <VscSurroundWith /> {runningTest === 'default:all' ? 'Playing…' : 'Surround Disabled'}
+                  </DialogButton>
+                </Focusable>
+
+                <div style={{ ...fieldHeadingStyle, marginTop: '12px' }}>Test a single channel (surround enabled)</div>
+                <Focusable
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gap: '4px',
+                    marginTop: '4px',
+                  }}
                 >
-                  <MdSurroundSound /> Surround Enabled
-                </DialogButton>
-                <DialogButton
-                  style={actionButtonStyle}
-                  onClick={() => runSoundTest('default')}
-                >
-                  <VscSurroundWith /> Surround Disabled
-                </DialogButton>
+                  {speakerGrid.map((code, index) => code ? (
+                    <DialogButton
+                      key={code}
+                      style={channelButtonStyle(runningTest === `virtual-surround:${code}`)}
+                      disabled={isApplyingHrir}
+                      onClick={() => runSoundTest('virtual-surround', code)}
+                    >
+                      {code}
+                    </DialogButton>
+                  ) : (
+                    <div key={`empty-${index}`} style={{ textAlign: 'center', fontSize: '18px', opacity: 0.6 }}>🎧</div>
+                  ))}
+                </Focusable>
+
+                {runningTest !== null && (
+                  <DialogButton style={{ ...actionButtonStyle, marginTop: '6px' }} onClick={() => stopSoundTest()}>
+                    <MdStop /> Stop test
+                  </DialogButton>
+                )}
+                {testError && (
+                  <div style={{ ...helperTextStyle, color: 'orange', marginTop: '4px' }}>{testError}</div>
+                )}
 
                 <br />
                 <div style={helperTextStyle}>
                   Compare how audio sounds with and without the virtual surround filter applied.
                   <br />
-                  The top button plays the test sequence with the surround filter enabled, while the
-                  bottom button plays it through the default SteamOS audio sink.
+                  The top button plays the test sequence through the surround filter, while the
+                  bottom button plays it through the real SteamOS output device (no filter).
+                  Starting a new test stops the previous one.
                   <br />
-                  Each test cycles through all 7.1 surround positions:
+                  The sequence goes through the channels in left/right pairs, front to back. A voice
+                  announces each channel:
                   <ul style={{ paddingLeft: 20, margin: 0 }}>
-                    <li>Front Left (FL)</li>
+                    <li>Front Left (FL), Front Right (FR)</li>
                     <li>Front Center (FC)</li>
-                    <li>Front Right (FR)</li>
-                    <li>Side Right (SR)</li>
-                    <li>Rear Right (RR)</li>
-                    <li>Rear Left (RL)</li>
-                    <li>Side Left (SL)</li>
+                    <li>Side Left (SL), Side Right (SR)</li>
+                    <li>Rear Left (RL), Rear Right (RR)</li>
                     <li>50Hz Low-Frequency Effects (LFE) tone (subwoofer)</li>
                   </ul>
                 </div>

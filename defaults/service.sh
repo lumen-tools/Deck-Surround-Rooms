@@ -22,7 +22,13 @@ _handle_signal() {
     exit 1
 }
 
-mix_gain_db="-6dB"
+# Per-input gain of the final L/R mixers (linear). 0.5 == -6dB.
+# NOTE: PipeWire filter-chain links do NOT support a "gain" key (it is ignored with an
+# "unexpected link key" error), so the gain has to be set as a control on the mixer nodes.
+mix_gain="0.5"
+# Low-pass cut-off for the LFE channel. LFE is non-directional, so it is low-passed and fed
+# to both ears directly instead of being convolved with the centre HRIR.
+lfe_cutoff_hz="120"
 
 # Configure pipewire modules names/descriptions
 virtual_surround_filter_sink_node_name="vss-filter"
@@ -118,10 +124,9 @@ filter_module_convolver_args_8=$(
             { "type": "builtin", "label": "convolver", "name": "convRR_R", "config": { "filename": "${HOME:?}/.config/pipewire/hrir.wav", "channel": 11 } },
             { "type": "builtin", "label": "convolver", "name": "convRR_L", "config": { "filename": "${HOME:?}/.config/pipewire/hrir.wav", "channel": 12 } },
             { "type": "builtin", "label": "convolver", "name": "convFC_R", "config": { "filename": "${HOME:?}/.config/pipewire/hrir.wav", "channel": 13 } },
-            { "type": "builtin", "label": "convolver", "name": "convLFE_L", "config": { "filename": "${HOME:?}/.config/pipewire/hrir.wav", "channel": 6 } },
-            { "type": "builtin", "label": "convolver", "name": "convLFE_R", "config": { "filename": "${HOME:?}/.config/pipewire/hrir.wav", "channel": 13 } },
-            { "type": "builtin", "label": "mixer", "name": "mixL" },
-            { "type": "builtin", "label": "mixer", "name": "mixR" }
+            { "type": "builtin", "label": "bq_lowpass", "name": "lpLFE", "control": { "Freq": ${lfe_cutoff_hz:?}, "Q": 0.707 } },
+            { "type": "builtin", "label": "mixer", "name": "mixL", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } },
+            { "type": "builtin", "label": "mixer", "name": "mixR", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } }
         ],
         "links": [
             { "output": "copyFL:Out", "input": "convFL_L:In" },
@@ -138,24 +143,23 @@ filter_module_convolver_args_8=$(
             { "output": "copyRR:Out", "input": "convRR_R:In" },
             { "output": "copyRR:Out", "input": "convRR_L:In" },
             { "output": "copyFC:Out", "input": "convFC_R:In" },
-            { "output": "copyLFE:Out", "input": "convLFE_L:In" },
-            { "output": "copyLFE:Out", "input": "convLFE_R:In" },
-            { "output": "convFL_L:Out", "input": "mixL:In 1", "gain": "${mix_gain_db:?}" },
-            { "output": "convFL_R:Out", "input": "mixR:In 1", "gain": "${mix_gain_db:?}" },
-            { "output": "convSL_L:Out", "input": "mixL:In 2", "gain": "${mix_gain_db:?}" },
-            { "output": "convSL_R:Out", "input": "mixR:In 2", "gain": "${mix_gain_db:?}" },
-            { "output": "convRL_L:Out", "input": "mixL:In 3", "gain": "${mix_gain_db:?}" },
-            { "output": "convRL_R:Out", "input": "mixR:In 3", "gain": "${mix_gain_db:?}" },
-            { "output": "convFC_L:Out", "input": "mixL:In 4", "gain": "${mix_gain_db:?}" },
-            { "output": "convFC_R:Out", "input": "mixR:In 4", "gain": "${mix_gain_db:?}" },
-            { "output": "convFR_R:Out", "input": "mixR:In 5", "gain": "${mix_gain_db:?}" },
-            { "output": "convFR_L:Out", "input": "mixL:In 5", "gain": "${mix_gain_db:?}" },
-            { "output": "convSR_R:Out", "input": "mixR:In 6", "gain": "${mix_gain_db:?}" },
-            { "output": "convSR_L:Out", "input": "mixL:In 6", "gain": "${mix_gain_db:?}" },
-            { "output": "convRR_R:Out", "input": "mixR:In 7", "gain": "${mix_gain_db:?}" },
-            { "output": "convRR_L:Out", "input": "mixL:In 7", "gain": "${mix_gain_db:?}" },
-            { "output": "convLFE_R:Out", "input": "mixR:In 8", "gain": "${mix_gain_db:?}" },
-            { "output": "convLFE_L:Out", "input": "mixL:In 8", "gain": "${mix_gain_db:?}" }
+            { "output": "copyLFE:Out", "input": "lpLFE:In" },
+            { "output": "convFL_L:Out", "input": "mixL:In 1" },
+            { "output": "convFL_R:Out", "input": "mixR:In 1" },
+            { "output": "convSL_L:Out", "input": "mixL:In 2" },
+            { "output": "convSL_R:Out", "input": "mixR:In 2" },
+            { "output": "convRL_L:Out", "input": "mixL:In 3" },
+            { "output": "convRL_R:Out", "input": "mixR:In 3" },
+            { "output": "convFC_L:Out", "input": "mixL:In 4" },
+            { "output": "convFC_R:Out", "input": "mixR:In 4" },
+            { "output": "convFR_R:Out", "input": "mixR:In 5" },
+            { "output": "convFR_L:Out", "input": "mixL:In 5" },
+            { "output": "convSR_R:Out", "input": "mixR:In 6" },
+            { "output": "convSR_L:Out", "input": "mixL:In 6" },
+            { "output": "convRR_R:Out", "input": "mixR:In 7" },
+            { "output": "convRR_L:Out", "input": "mixL:In 7" },
+            { "output": "lpLFE:Out", "input": "mixR:In 8" },
+            { "output": "lpLFE:Out", "input": "mixL:In 8" }
         ],
         "inputs":  [ "copyFL:In", "copyFR:In", "copyFC:In", "copyLFE:In", "copyRL:In", "copyRR:In", "copySL:In", "copySR:In" ],
         "outputs": [ "mixL:Out", "mixR:Out" ]
@@ -284,21 +288,10 @@ filter_module_sofa_args_8=$(
                     "Radius": 10.0
                 }
             },
-            {
-                "type": "sofa",
-                "label": "spatializer",
-                "name": "spLFE",
-                "config": {
-                    "filename": "${HOME:?}/.config/pipewire/hrir.sofa"
-                },
-                "control": {
-                    "Azimuth": 0.0,
-                    "Elevation": -60.0,
-                    "Radius": 3.0
-                }
-            },
-            { "type": "builtin", "label": "mixer", "name": "mixL" },
-            { "type": "builtin", "label": "mixer", "name": "mixR" }
+            { "type": "builtin", "label": "copy", "name": "copyLFE" },
+            { "type": "builtin", "label": "bq_lowpass", "name": "lpLFE", "control": { "Freq": ${lfe_cutoff_hz:?}, "Q": 0.707 } },
+            { "type": "builtin", "label": "mixer", "name": "mixL", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } },
+            { "type": "builtin", "label": "mixer", "name": "mixR", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } }
         ],
         "links": [
             { "output": "spFL:Out L", "input": "mixL:In 1" },
@@ -315,14 +308,16 @@ filter_module_sofa_args_8=$(
             { "output": "spSL:Out R", "input": "mixR:In 6" },
             { "output": "spSR:Out L", "input": "mixL:In 7" },
             { "output": "spSR:Out R", "input": "mixR:In 7" },
-            { "output": "spLFE:Out L", "input": "mixL:In 8" },
-            { "output": "spLFE:Out R", "input": "mixR:In 8" }
+            { "output": "copyLFE:Out", "input": "lpLFE:In" },
+            { "output": "lpLFE:Out", "input": "mixL:In 8" },
+            { "output": "lpLFE:Out", "input": "mixR:In 8" }
         ],
-        "inputs":  [ "spFL:In", "spFR:In", "spFC:In", "spLFE:In", "spRL:In", "spRR:In", "spSL:In", "spSR:In" ],
+        "inputs":  [ "spFL:In", "spFR:In", "spFC:In", "copyLFE:In", "spRL:In", "spRR:In", "spSL:In", "spSR:In" ],
         "outputs": [ "mixL:Out", "mixR:Out" ]
     },
     capture.props = {
         "node.name": "${virtual_surround_filter_sink_capture_node_name:?}",
+        "node.description": "${virtual_surround_filter_sink_description:?}",
         "media.class": "Audio/Sink",
         "audio.channels": 8,
         "audio.position": [ FL FR FC LFE RL RR SL SR ],
@@ -761,9 +756,28 @@ run() {
     echo "DONE"
 }
 
+# speaker-test addresses single speakers (-s N) in its own "circular clockwise" order, NOT in the
+# PipeWire/ALSA channel order:
+#   1=FL 2=FC 3=FR 4=SR 5=RR 6=RL 7=SL 8=LFE
+speaker_test_index() {
+    case "$1" in
+    FL) echo 1 ;;
+    FC) echo 2 ;;
+    FR) echo 3 ;;
+    SR) echo 4 ;;
+    RR) echo 5 ;;
+    RL) echo 6 ;;
+    SL) echo 7 ;;
+    LFE) echo 8 ;;
+    *) return 1 ;;
+    esac
+}
+
 speaker_test() {
     echo "Running sound test"
     local pulse_sink_name="${virtual_surround_filter_sink_capture_node_name:?}"
+    # Default sequence: left/right pairs from front to back, then the subwoofer.
+    local -a test_channels=(FL FR FC SL SR RL RR LFE)
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --sink=*)
@@ -773,6 +787,13 @@ speaker_test() {
             shift
             pulse_sink_name="$1"
             ;;
+        --channel=*)
+            test_channels=("${1#*=}")
+            ;;
+        --channel)
+            shift
+            test_channels=("$1")
+            ;;
         *)
             echo "Invalid arg: $1"
             print_usage_and_exit 1
@@ -781,10 +802,27 @@ speaker_test() {
         shift
     done
 
-    for i in {0..6}; do
-        speaker-test -D "pulse:${pulse_sink_name:?}" -c 8 -t wave -s $((i + 1))
+    # Never let the test silently fall back to some other output. If the sink does not exist,
+    # PipeWire would route the stream to whatever the current default is, which makes the
+    # result different from one run to the next.
+    if ! pactl list short sinks 2>/dev/null | cut -f2 | grep -Fxq -- "${pulse_sink_name:?}"; then
+        echo "ERROR! Sink '${pulse_sink_name}' does not exist. Aborting sound test." >&2
+        exit 1
+    fi
+
+    local ch idx
+    for ch in "${test_channels[@]}"; do
+        if ! idx=$(speaker_test_index "${ch}"); then
+            echo "ERROR! Unknown channel '${ch}'" >&2
+            exit 1
+        fi
+        echo "  - ${ch} (speaker-test -s ${idx})"
+        if [[ "${ch}" == "LFE" ]]; then
+            speaker-test -D "pulse:${pulse_sink_name:?}" -c 8 -t sine -f 50 -s "${idx}"
+        else
+            speaker-test -D "pulse:${pulse_sink_name:?}" -c 8 -t wav -s "${idx}"
+        fi
     done
-    speaker-test -D "pulse:${pulse_sink_name:?}" -c 8 -t sine -f 50 -s 8
 }
 
 install_service() {
@@ -883,7 +921,7 @@ stop_service() {
 }
 
 print_usage_and_exit() {
-    echo "Usage: $0 {run|install|uninstall|restart|stop|kill-all|print-vss-info} [--filter=<convolver|sofa>] [additional args...]"
+    echo "Usage: $0 {run|install|uninstall|restart|stop|kill-all|print-vss-info|speaker-test} [--filter=<convolver|sofa>] [--sink=<name>] [--channel=<FL|FR|FC|LFE|RL|RR|SL|SR>] [additional args...]"
     exit "$1"
 }
 

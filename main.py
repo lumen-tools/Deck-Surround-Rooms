@@ -150,6 +150,162 @@ pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewir
 hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
 sofa_directory = os.path.join(script_directory, "hrtf-sofa")
 sofa_dest_path = os.path.join(pipewire_config_path, "hrir.sofa")
+hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wav")
+
+# Bump this whenever the filter graph in service.sh changes so that an already running
+# systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
+SERVICE_GRAPH_VERSION = 2
+# Bump this whenever the HRIR preparation (normalisation) changes.
+HRIR_PREPARE_VERSION = 1
+
+# HeSuVi 14 channel layout used by the convolver graph in service.sh.
+# Each virtual speaker is rendered by two impulse responses (one per ear).
+HRIR_SPEAKER_CHANNELS = {
+    "FL": (0, 1),
+    "SL": (2, 3),
+    "RL": (4, 5),
+    "FC": (6, 13),
+    "FR": (7, 8),
+    "SR": (9, 10),
+    "RR": (11, 12),
+}
+
+
+class UnsupportedHrirError(Exception):
+    pass
+
+
+def _wav_read_header(data: bytes) -> tuple[dict, int, int]:
+    """Returns (fmt, data_offset, data_size) for a RIFF/WAVE byte string."""
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise UnsupportedHrirError("Not a RIFF/WAVE file")
+    import struct
+    pos = 12
+    fmt = None
+    data_offset = data_size = None
+    while pos + 8 <= len(data):
+        chunk_id = data[pos:pos + 4]
+        chunk_size = struct.unpack("<I", data[pos + 4:pos + 8])[0]
+        body_start = pos + 8
+        if chunk_id == b"fmt ":
+            tag, channels, rate, _, block_align, bits = struct.unpack("<HHIIHH", data[body_start:body_start + 16])
+            if tag == 0xFFFE and chunk_size >= 40:
+                # WAVE_FORMAT_EXTENSIBLE: real format tag is the first 2 bytes of the sub-format GUID
+                tag = struct.unpack("<H", data[body_start + 24:body_start + 26])[0]
+            fmt = {"tag": tag, "channels": channels, "rate": rate, "block_align": block_align, "bits": bits}
+        elif chunk_id == b"data":
+            data_offset = body_start
+            data_size = min(chunk_size, len(data) - body_start)
+        pos = body_start + chunk_size + (chunk_size & 1)
+    if fmt is None or data_offset is None:
+        raise UnsupportedHrirError("Missing fmt or data chunk")
+    return fmt, data_offset, data_size
+
+
+def wav_channel_count(path: str) -> int | None:
+    try:
+        with open(path, "rb") as f:
+            fmt, _, _ = _wav_read_header(f.read())
+        return int(fmt["channels"])
+    except Exception:
+        return None
+
+
+def read_wav(path: str) -> tuple[int, list[list[float]]]:
+    """Reads a PCM or IEEE float WAV file into per-channel float lists (pure Python, no numpy)."""
+    import struct
+    with open(path, "rb") as f:
+        data = f.read()
+    fmt, offset, size = _wav_read_header(data)
+    tag, n_ch, bits = fmt["tag"], fmt["channels"], fmt["bits"]
+    if n_ch < 1:
+        raise UnsupportedHrirError("Invalid channel count")
+    raw = data[offset:offset + size]
+    if tag == 3 and bits == 32:
+        n = len(raw) // 4
+        samples = list(struct.unpack("<%df" % n, raw[:n * 4]))
+    elif tag == 3 and bits == 64:
+        n = len(raw) // 8
+        samples = list(struct.unpack("<%dd" % n, raw[:n * 8]))
+    elif tag == 1 and bits == 16:
+        n = len(raw) // 2
+        samples = [v / 32768.0 for v in struct.unpack("<%dh" % n, raw[:n * 2])]
+    elif tag == 1 and bits == 32:
+        n = len(raw) // 4
+        samples = [v / 2147483648.0 for v in struct.unpack("<%di" % n, raw[:n * 4])]
+    elif tag == 1 and bits == 24:
+        n = len(raw) // 3
+        samples = [int.from_bytes(raw[i:i + 3], "little", signed=True) / 8388608.0 for i in range(0, n * 3, 3)]
+    elif tag == 1 and bits == 8:
+        samples = [(v - 128) / 128.0 for v in raw]
+    else:
+        raise UnsupportedHrirError(f"Unsupported WAV sample format (tag={tag}, bits={bits})")
+    frames = len(samples) // n_ch
+    return fmt["rate"], [samples[c:frames * n_ch:n_ch] for c in range(n_ch)]
+
+
+def write_wav_float32(path: str, rate: int, channels: list[list[float]]) -> None:
+    import struct
+    n_ch = len(channels)
+    frames = len(channels[0])
+    interleaved = [channels[c][i] for i in range(frames) for c in range(n_ch)]
+    payload = struct.pack("<%df" % len(interleaved), *interleaved)
+    header = b"RIFF" + struct.pack("<I", 4 + 8 + 16 + 8 + len(payload)) + b"WAVE"
+    header += b"fmt " + struct.pack("<IHHIIHH", 16, 3, n_ch, rate, rate * n_ch * 4, n_ch * 4, 32)
+    header += b"data" + struct.pack("<I", len(payload))
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "wb") as f:
+        f.write(header + payload)
+    os.replace(tmp_path, path)
+
+
+def prepare_hrir(source_path: str, dest_path: str, balance_channels: bool) -> dict:
+    """
+    Converts a HeSuVi style HRIR WAV into the 14 channel float WAV that the convolver graph expects
+    and normalises its level.
+
+    - 7 channel (symmetric) HeSuVi files are expanded to 14 channels by mirroring the left side.
+    - The overall level is normalised so that different HRIR presets play back at the same loudness
+      (the bundled presets differ by more than 10 dB otherwise).
+    - With balance_channels enabled, every virtual speaker is normalised individually so that all
+      8 channels have the same loudness and left/right are symmetric. The interaural level
+      difference of each speaker (which carries the direction information) is preserved.
+    """
+    rate, channels = read_wav(source_path)
+    n_ch = len(channels)
+    if n_ch == 7:
+        channels = channels + [list(c) for c in channels]
+    elif n_ch != 14:
+        raise UnsupportedHrirError(f"Expected a 7 or 14 channel HeSuVi HRIR, got {n_ch} channels")
+
+    energies = {}
+    for speaker, (a, b) in HRIR_SPEAKER_CHANNELS.items():
+        energies[speaker] = sum(x * x for x in channels[a]) + sum(x * x for x in channels[b])
+    if any(e <= 1e-12 for e in energies.values()):
+        raise UnsupportedHrirError("HRIR contains silent channels")
+
+    import math
+    gains = {}
+    if balance_channels:
+        for speaker, energy in energies.items():
+            gains[speaker] = 1.0 / math.sqrt(energy)
+    else:
+        mean_energy = sum(energies.values()) / len(energies)
+        for speaker in energies:
+            gains[speaker] = 1.0 / math.sqrt(mean_energy)
+
+    out = [list(c) for c in channels]
+    for speaker, (a, b) in HRIR_SPEAKER_CHANNELS.items():
+        g = gains[speaker]
+        out[a] = [x * g for x in channels[a]]
+        out[b] = [x * g for x in channels[b]]
+    write_wav_float32(dest_path, rate, out)
+    return {
+        "source_channels": n_ch,
+        "rate": rate,
+        "levels_db": {k: round(10 * math.log10(v), 1) for k, v in energies.items()},
+        "gains_db": {k: round(20 * math.log10(v), 1) for k, v in gains.items()},
+    }
 
 
 def subprocess_exec_env():
@@ -239,6 +395,7 @@ class Plugin:
 
     def __init__(self):
         self._background_task = None
+        self._sound_test_process = None
         self.stop_event = asyncio.Event()
 
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
@@ -280,6 +437,8 @@ class Plugin:
         decky.logger.info("Removing '%s' if it exists", hrir_dest_path)
         if os.path.exists(hrir_dest_path):
             os.remove(hrir_dest_path)
+        if os.path.exists(hrir_original_backup_path):
+            os.remove(hrir_original_backup_path)
         decky.logger.info("Plugin uninstalled")
 
     # Migrations that should be performed before entering `_main()`.
@@ -322,11 +481,52 @@ class Plugin:
         decky.logger.info("Background tasks stopped")
 
     async def init_config(self):
-        if not os.path.exists(os.path.join(pipewire_config_path, "hrir.wav")):
+        if not os.path.exists(hrir_dest_path):
             decky.logger.info("Installing default HRIR .wav file '%s'", default_hrir_file)
-            await self.set_hrir_file(os.path.join(hrir_directory, default_hrir_file))
-        decky.logger.info("Installing service")
-        await service_script_exec("install")
+            self._install_hrir(os.path.join(hrir_directory, default_hrir_file))
+        elif settings.getSetting("hrir_prepared_version", 0) != HRIR_PREPARE_VERSION:
+            # Installed by an older plugin version as a raw copy. Find out which preset it was and
+            # re-install it with level normalisation.
+            source_path = self._find_hrir_source_for_installed_file()
+            decky.logger.info("Migrating installed HRIR file (source: %s)", source_path)
+            self._install_hrir(source_path)
+        restart = settings.getSetting("service_graph_version", 0) != SERVICE_GRAPH_VERSION
+        decky.logger.info("Installing service (restart=%s)", restart)
+        await service_script_exec("install", ["--restart-after-install"] if restart else [])
+        settings.setSetting("service_graph_version", SERVICE_GRAPH_VERSION)
+
+    @staticmethod
+    def _find_hrir_source_for_installed_file() -> str:
+        """Older versions copied the preset 1:1 to hrir.wav. Find the matching preset file."""
+        import filecmp
+        try:
+            for filename in os.listdir(hrir_directory):
+                candidate = os.path.join(hrir_directory, filename)
+                if filename.endswith(".wav") and filecmp.cmp(candidate, hrir_dest_path, shallow=False):
+                    return candidate
+        except OSError:
+            pass
+        # Unknown (custom) file: keep a backup of the original so it can be re-processed later.
+        shutil.copy2(hrir_dest_path, hrir_original_backup_path)
+        return hrir_original_backup_path
+
+    @staticmethod
+    def _install_hrir(source_path: str) -> bool:
+        """Prepares (normalises) the HRIR and writes it to ~/.config/pipewire/hrir.wav."""
+        os.makedirs(os.path.dirname(hrir_dest_path), exist_ok=True)
+        balance = bool(settings.getSetting("hrir_balance_channels", True))
+        try:
+            info = prepare_hrir(source_path, hrir_dest_path, balance)
+            decky.logger.info("Installed HRIR %s -> %s (balance=%s): %s",
+                              source_path, hrir_dest_path, balance, info)
+        except UnsupportedHrirError as e:
+            # Unknown layout. Install unchanged so the user can still use it.
+            decky.logger.warning("Unable to normalise HRIR '%s' (%s). Installing unchanged.", source_path, e)
+            shutil.copy2(source_path, hrir_dest_path)
+        os.chmod(hrir_dest_path, 0o644)
+        settings.setSetting("hrir_source_path", source_path)
+        settings.setSetting("hrir_prepared_version", HRIR_PREPARE_VERSION)
+        return True
 
     async def get_surround_sink_default(self):
         """Checks if the Virtual Surround Sound sink should be the default"""
@@ -541,50 +741,14 @@ class Plugin:
     async def get_hrir_file_list(self) -> list[dict[str, str | None | int]] | None:
         """Lists available HRIR files with channel count."""
         hrir_files = []
-        i = 1
-        # Check if ffprobe is installed
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "ffprobe", "-version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=subprocess_exec_env()
-            )
-            await process.communicate()
-            ffprobe = process.returncode == 0
-        except FileNotFoundError:
-            decky.logger.warning("ffprobe not found. HRIR channel detection will be skipped.")
-            ffprobe = False
-        except Exception as e:
-            decky.logger.error(f"Error checking ffprobe: {e}")
-            ffprobe = False
         for filename in os.listdir(hrir_directory):
-            if filename.endswith(".wav") and os.path.isfile(os.path.join(hrir_directory, filename)):
-                filepath = os.path.join(hrir_directory, filename)
-                channel_count = None
-                try:
-                    if ffprobe:
-                        process = await asyncio.create_subprocess_exec(
-                            "ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels",
-                            "-of", "default=noprint_wrappers=1:nokey=1", filepath,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                            env=subprocess_exec_env()
-                        )
-                        stdout, stderr = await process.communicate()
-                        if process.returncode != 0:
-                            decky.logger.error(f"ffprobe failed for {filename}: {stderr.decode()}")
-                        else:
-                            channel_count = int(stdout.decode().strip())
-                except (ValueError, FileNotFoundError) as e:
-                    channel_count = None
-                finally:
-                    hrir_files.append({
-                        "label": os.path.basename(filepath)[:-4],
-                        "path": filepath,
-                        "channel_count": channel_count
-                    })
-                    i += 1
+            filepath = os.path.join(hrir_directory, filename)
+            if filename.endswith(".wav") and os.path.isfile(filepath):
+                hrir_files.append({
+                    "label": os.path.basename(filepath)[:-4],
+                    "path": filepath,
+                    "channel_count": wav_channel_count(filepath),
+                })
         if hrir_files:
             hrir_files.sort(key=lambda x: (x["channel_count"] is not None, x["channel_count"] or 0, x["path"]),
                             reverse=False)
@@ -594,15 +758,23 @@ class Plugin:
         """Installs the specified HRIR file."""
         decky.logger.info("Installing %s", selected_hrir_path)
         try:
-            os.makedirs(os.path.dirname(hrir_dest_path), exist_ok=True)
-            shutil.copy2(selected_hrir_path, hrir_dest_path)
-            os.chmod(hrir_dest_path, 0o644)
-            decky.logger.info("Copied %s to %s", selected_hrir_path, hrir_dest_path)
+            self._install_hrir(selected_hrir_path)
             await service_script_exec("restart")
             return True
         except Exception as e:
-            decky.logger.error("Error: Failed to copy HRIR WAV file: %s", e)
+            decky.logger.error("Error: Failed to install HRIR WAV file: %s", e)
         return False
+
+    async def get_hrir_balance_channels(self) -> bool:
+        return bool(settings.getSetting("hrir_balance_channels", True))
+
+    async def set_hrir_balance_channels(self, enabled: bool) -> bool:
+        """Toggles per-channel level balancing and re-installs the current HRIR."""
+        settings.setSetting("hrir_balance_channels", bool(enabled))
+        source_path = settings.getSetting("hrir_source_path", None)
+        if not source_path or not os.path.isfile(source_path):
+            source_path = os.path.join(hrir_directory, default_hrir_file)
+        return await self.set_hrir_file(source_path)
 
     async def get_sofa_file_list(self) -> list[dict[str, str | None | int]] | None:
         """Lists available SOFA files."""
@@ -642,19 +814,77 @@ class Plugin:
             decky.logger.error("Error: Failed to copy SOFA file: %s", e)
         return False
 
-    async def run_sound_test(self, sink: str):
-        """Run a surround sound test using the sink specified"""
-        sink_name = sink
-        if sink == "default":
+    async def _stop_running_sound_test(self):
+        process = getattr(self, "_sound_test_process", None)
+        if process is not None and process.returncode is None:
+            decky.logger.info("Stopping running sound test (pid %s)", process.pid)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, 15)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), timeout=3)
+        self._sound_test_process = None
+
+    async def stop_sound_test(self) -> bool:
+        await self._stop_running_sound_test()
+        return True
+
+    async def run_sound_test(self, sink: str, channel: str | None = None) -> bool:
+        """
+        Run a surround sound test.
+
+        sink:    "virtual-surround" (through the surround filter) or "default" (the real output device
+                 without the filter). Any other value is used as a literal sink name.
+        channel: optional single channel code (FL, FR, FC, LFE, RL, RR, SL, SR). Plays the full sequence if empty.
+        """
+        sink_name = None
+        if sink in ("virtual-surround", "virtual-surround-sound-filter"):
+            filter_name, _ = await get_virtual_surround_sink_names()
+            sink_name = filter_name
+        elif sink == "default":
             fallback_sink_id = await self.get_highest_priority_sink_id()
             if fallback_sink_id is not None:
                 sinks = await self.list_sinks() or []
                 fallback_sink = next(
-                    (sink for sink in sinks if self._object_id_from_sink(sink) == fallback_sink_id),
+                    (entry for entry in sinks if self._object_id_from_sink(entry) == fallback_sink_id),
                     None
                 )
-                sink_name = fallback_sink.get("name")
-        await service_script_exec("speaker-test", ["--sink", sink_name])
+                if fallback_sink:
+                    sink_name = fallback_sink.get("name")
+        else:
+            sink_name = sink
+        if not sink_name:
+            decky.logger.error("Sound test: unable to resolve sink '%s'", sink)
+            return False
+
+        # Only ever run one test at a time. Overlapping runs play two channels at once.
+        await self._stop_running_sound_test()
+
+        args = ["--sink", sink_name]
+        if channel:
+            args += ["--channel", str(channel)]
+        decky.logger.info("Sound test on sink '%s' channel '%s'", sink_name, channel or "all")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                os.path.join(script_directory, "service.sh"), "speaker-test", *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=subprocess_exec_env(),
+                start_new_session=True,
+            )
+        except Exception as e:
+            decky.logger.error("Error starting sound test: %s", e)
+            return False
+        self._sound_test_process = process
+        stdout, stderr = await process.communicate()
+        if self._sound_test_process is process:
+            self._sound_test_process = None
+        if process.returncode is not None and process.returncode < 0:
+            decky.logger.info("Sound test was stopped")
+            return False
+        if process.returncode != 0:
+            decky.logger.error("Sound test failed (%s): %s", process.returncode, stderr.decode().strip())
+            return False
+        return True
 
     @staticmethod
     def _sink_input_properties(sink_input: dict | None) -> dict:

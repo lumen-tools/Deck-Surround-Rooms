@@ -1,4 +1,5 @@
 export interface PluginConfig {
+  configVersion?: number;
   installationId?: string;
   notesAcknowledgedV2: boolean;
   hrirName: string;

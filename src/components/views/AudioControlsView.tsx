@@ -3,7 +3,7 @@ import {
   DialogButton,
   PanelSection,
   PanelSectionRow,
-  Focusable, ToggleField, SliderField, Router, Spinner,
+  Focusable, ToggleField, SliderField, Router, Spinner, ButtonItem,
 } from '@decky/ui'
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
@@ -20,12 +20,12 @@ import { MdOutlineWarningAmber, MdSettings } from 'react-icons/md'
 import { call } from '@decky/api'
 import {
   defaultMixerProfile,
+  defaultMixerVolumes,
   getCurrentMixerProfile,
   getMixerChannels,
   getPluginConfig, setMixerProfileInBackend,
   setPluginConfig,
 } from '../../constants'
-import { FaVolumeUp } from 'react-icons/fa'
 import { popupVssHelpDialog } from '../elements/VssHelpDialog'
 
 
@@ -181,11 +181,14 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     console.log(`[decky-virtual-surround-sound:AudioControlsView] Toggle per-app profile: ${enabled}`)
     setUsePerAppProfiles(enabled)
     if (runningApp?.display_name) {
+      const existingProfile = getPluginConfig().perAppProfiles?.[runningApp.display_name]
       setPluginConfig({
         perAppProfiles: {
           [runningApp.display_name]: {
             name: runningApp.display_name,
             usePerAppProfile: enabled,
+            // A new per-game profile starts with the volumes that are currently active.
+            volumes: existingProfile?.volumes ?? { ...mixerVolumes },
           },
         },
       })
@@ -194,6 +197,8 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
       setUsePerAppProfiles(false)
     }
     await updateMixerProfile()
+    // Apply the (possibly different) profile right away instead of waiting for the background poll.
+    await setMixerProfileInBackend(await getCurrentMixerProfile())
   }
 
   const updateChannelVolume = useCallback(
@@ -220,6 +225,21 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
   const channelDebounceRef = useRef(
     new Map<string, { timer: ReturnType<typeof setTimeout>; value: number }>(),
   )
+  const resetMixerVolumes = async () => {
+    channelDebounceRef.current.forEach((entry) => clearTimeout(entry.timer))
+    channelDebounceRef.current.clear()
+    const volumes = { ...defaultMixerVolumes }
+    setMixerVolumes(volumes)
+    const mixerProfile: MixerProfile = { name: profile, volumes }
+    setPluginConfig({
+      perAppProfiles: {
+        ...currentConfig?.perAppProfiles,
+        [profile]: { ...(currentConfig?.perAppProfiles?.[profile] ?? {}), ...mixerProfile },
+      },
+    })
+    await setMixerProfileInBackend(mixerProfile)
+  }
+
   const handleVolumeChange = (channel: string, value: number) => {
     const updatedVolumes = { ...mixerVolumes, [channel]: value }
     setMixerVolumes(updatedVolumes)
@@ -481,30 +501,34 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
       </PanelSection>
       <div className={staticClasses.PanelSectionTitle} style={{ marginLeft: '10px' }}>Mixer</div>
       <PanelSection>
-        {/*Volume mixer*/}
+        {/*Volume mixer. The slider is placed below its label: the previous inline layout (icon + long
+        label + slider + value box in one row) was wider than the Quick Access Menu and pushed the whole
+        panel to the right.*/}
         {channels.map(({ code, label }) => (
-          <>
-            <PanelSectionRow>
-              <SliderField
-                key={code}
-                min={0}
-                max={150}
-                step={5}
-                notchCount={4}
-                notchTicksVisible={false}
-                label={label}
-                showValue
-                layout="inline"
-                bottomSeparator="none"
-                icon={<FaVolumeUp />}
-                value={mixerVolumes[code] ?? 100}
-                onChange={(value: number) => {
-                  handleVolumeChange(code, value)
-                }}
-              />
-            </PanelSectionRow>
-          </>
+          <PanelSectionRow key={code}>
+            <SliderField
+              min={0}
+              max={150}
+              step={5}
+              notchCount={4}
+              notchTicksVisible={false}
+              label={`${label} (${code})`}
+              showValue
+              valueSuffix="%"
+              resetValue={100}
+              bottomSeparator="none"
+              value={mixerVolumes[code] ?? 100}
+              onChange={(value: number) => {
+                handleVolumeChange(code, value)
+              }}
+            />
+          </PanelSectionRow>
         ))}
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => resetMixerVolumes()}>
+            Reset all channels to 100%
+          </ButtonItem>
+        </PanelSectionRow>
       </PanelSection>
     </>
   )
