@@ -429,6 +429,7 @@ class Plugin:
         self._volume_sync_task = None
         self._volume_sync_state: dict = {}
         self._neutralized_vss_state = None
+        self._state_lock = asyncio.Lock()
         self.stop_event = asyncio.Event()
 
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
@@ -763,6 +764,7 @@ class Plugin:
     async def _routing_is_applied(self, enabled: bool) -> bool:
         filter_name, device_name = await get_virtual_surround_sink_names()
         sinks = await self.list_sinks() or []
+        managed_targets = await self._managed_targets(sinks, filter_name, device_name)
         surround_indices = {
             self._sink_index_from_entry(sink) for sink in sinks
             if sink.get("name") in (filter_name, device_name)
@@ -770,7 +772,7 @@ class Plugin:
         if enabled and not surround_indices:
             return False
         for sink_input in await self.list_sink_inputs() or []:
-            if self._is_internal_stream(sink_input) or self._sink_input_target_object(sink_input).strip():
+            if self._is_internal_stream(sink_input) or self._is_pinned_elsewhere(sink_input, managed_targets):
                 continue
             on_surround = self._parse_int(sink_input.get("sink"), -1) in surround_indices
             if on_surround != enabled:
@@ -797,7 +799,49 @@ class Plugin:
             return True
         return props.get("application.process.binary") in self.INTERNAL_STREAM_BINARIES
 
+    @staticmethod
+    def _sink_identifiers(sink: dict | None) -> set[str]:
+        """All values a stream's target.object may use to refer to this sink."""
+        if not sink:
+            return set()
+        props = sink.get("properties") or {}
+        values = {sink.get("name"), props.get("node.name"), props.get("object.id"), props.get("object.serial")}
+        return {str(v) for v in values if v not in (None, "")}
+
+    async def _managed_targets(self, sinks: list[dict], filter_name: str, device_name: str) -> set[str]:
+        """
+        Targets the plugin switches between: the virtual surround sinks, the real output device and the
+        current default sink. Proton/Wine games open their stream on the default device *by name*,
+        which pins them to it; such streams must still be switched. Only streams pinned to some other
+        device (e.g. HDMI chosen in the game) are left alone.
+        """
+        managed: set[str] = set()
+        for sink in sinks:
+            if sink.get("name") in (filter_name, device_name):
+                managed |= self._sink_identifiers(sink)
+        output_id = await self.get_highest_priority_sink_id()
+        managed |= self._sink_identifiers(
+            next((sink for sink in sinks if self._object_id_from_sink(sink) == output_id), None))
+        default_name = await self.get_default_sink_name()
+        managed |= self._sink_identifiers(next((sink for sink in sinks if sink.get("name") == default_name), None))
+        return managed
+
+    def _is_pinned_elsewhere(self, sink_input: dict, managed_targets: set[str]) -> bool:
+        """True for streams the plugin must not (or cannot) move."""
+        props = self._sink_input_properties(sink_input)
+        # Streams created with "don't move" cannot be moved by anyone but the app itself.
+        if str(props.get("node.dont-reconnect", "")).lower() == "true":
+            return True
+        target = self._sink_input_target_object(sink_input).strip()
+        return bool(target) and target not in managed_targets
+
     async def check_state(self):
+        # Serialised: a background run that started before the switch was flipped must not move apps
+        # back after the switch has been applied.
+        async with self._state_lock:
+            await self._check_state()
+
+    async def _check_state(self):
         settings.read()
         sinks = await self.list_sinks() or []
         sink_inputs = await self.list_sink_inputs()
@@ -868,11 +912,12 @@ class Plugin:
             surround_sink_indices.add(virtual_surround_index)
         if virtual_surround_device_index is not None:
             surround_sink_indices.add(virtual_surround_device_index)
+        managed_targets = await self._managed_targets(sinks, filter_name, device_name)
         for sink_input in sink_inputs:
             if self._is_internal_stream(sink_input):
                 continue
-            # Apps that picked their output device themselves are left alone.
-            if self._sink_input_target_object(sink_input).strip():
+            # Apps that picked another output device themselves are left alone.
+            if self._is_pinned_elsewhere(sink_input, managed_targets):
                 continue
             app_name = self._sink_input_app_name(sink_input) or f"sink input {sink_input.get('index')}"
             current_sink_index = self._parse_int(sink_input.get('sink'), -1)
