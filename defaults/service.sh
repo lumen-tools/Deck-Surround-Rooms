@@ -8,6 +8,7 @@ real_script_directory="$(cd "$(dirname "${script_path}")" && pwd)"
 
 # Catch term signal
 _term() {
+    stop_audio_event_subscription
     cleanup_virtual_surround_module
     cleanup_virtual_surround_default_sink
 }
@@ -696,6 +697,53 @@ is_pid_running() {
 
 filter_reload_requested="false"
 
+# ---- Audio event subscription -------------------------------------------------------------------
+# The service used to check (and re-link) the whole chain every second. Each check starts several
+# PipeWire clients (pactl, pw-link, ...), which also keeps PipeWire and WirePlumber busy: a constant
+# few percent of a CPU core and battery, even while nothing changes. Now the chain is only checked
+# when PipeWire reports a change of a sink, card or the default output (pactl subscribe), plus a
+# slow safety check every few seconds.
+audio_event_check_interval=10
+
+start_audio_event_subscription() {
+    if [[ -n "${VSS_EVENTS_PID:-}" ]] && is_pid_running "${VSS_EVENTS_PID}"; then
+        return 0
+    fi
+    coproc VSS_EVENTS { exec pactl subscribe 2>/dev/null; }
+}
+
+stop_audio_event_subscription() {
+    if [[ -n "${VSS_EVENTS_PID:-}" ]]; then
+        kill "${VSS_EVENTS_PID}" >/dev/null 2>&1 || true
+    fi
+}
+
+# Waits up to $1 seconds for a relevant audio event. Returns success if one arrived.
+wait_for_audio_event() {
+    local timeout="$1"
+    local fd="${VSS_EVENTS[0]:-}"
+    local line relevant=1 start="${SECONDS}"
+    if [[ -z "${fd}" ]]; then
+        sleep "${timeout}"
+        return 1
+    fi
+    if IFS= read -r -t "${timeout}" -u "${fd}" line; then
+        if [[ "${line}" == *" on sink #"* || "${line}" == *" on server"* || "${line}" == *" on card #"* ]]; then
+            relevant=0
+        fi
+        # Events come in bursts; collect the rest of the burst.
+        while IFS= read -r -t 0.2 -u "${fd}" line; do
+            if [[ "${line}" == *" on sink #"* || "${line}" == *" on server"* || "${line}" == *" on card #"* ]]; then
+                relevant=0
+            fi
+        done
+    elif [[ $((SECONDS - start)) -lt 1 ]] && ! is_pid_running "${VSS_EVENTS_PID:-}"; then
+        # The subscription ended (e.g. pipewire-pulse restarted). Don't spin; it is restarted.
+        sleep "${timeout}"
+    fi
+    return "${relevant}"
+}
+
 run() {
     trap '_handle_signal' INT QUIT HUP TERM ERR
     # SIGUSR1 reloads only the filter module (e.g. after the HRIR file changed). The
@@ -741,8 +789,17 @@ run() {
     fi
 
     local linking_failed=0
+    # Check every second for a while after start and after a filter reload (things are still
+    # settling), then only on audio events or every ${audio_event_check_interval} seconds.
+    local fast_checks_until=$((SECONDS + 15))
+    local last_check=-1000
+    local retry_next="false"
     while true; do
-        sleep 1
+        start_audio_event_subscription || true
+        local event="false"
+        if wait_for_audio_event 1; then
+            event="true"
+        fi
         if ! is_pid_running "${virtual_surround_filter_sink_pw_cli_pid}" || ! is_pid_running "${virtual_surround_device_sink_pw_cli_pid}"; then
             break
         fi
@@ -753,7 +810,14 @@ run() {
                 linking_failed=1
                 break
             fi
+            fast_checks_until=$((SECONDS + 15))
+            event="true"
         fi
+        if [[ "${event}" != "true" && "${retry_next}" != "true" && "${SECONDS}" -ge "${fast_checks_until}" && $((SECONDS - last_check)) -lt "${audio_event_check_interval}" ]]; then
+            continue
+        fi
+        last_check="${SECONDS}"
+        retry_next="false"
         if ! virtual_surround_sinks_exist; then
             echo "Virtual surround sinks are no longer available"
             linking_failed=1
@@ -763,8 +827,11 @@ run() {
             # Don't tear everything down (that also removes the sinks the apps are connected to);
             # just try again on the next iteration.
             echo "Linking failed, retrying"
+            retry_next="true"
         fi
     done
+
+    stop_audio_event_subscription
 
     cleanup_virtual_surround_default_sink
     cleanup_virtual_surround_module
