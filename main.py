@@ -1206,9 +1206,11 @@ class Plugin:
         try:
             process = await asyncio.create_subprocess_exec(
                 *prefix, "pw-record",
-                "--target", device_name,
+                # Not linked by the session manager: on SteamOS it connected the channels in a different
+                # order (stereo showed up as SL/SR). The ports are linked by name below instead.
+                "--target", "0",
                 "-P", "{ stream.capture.sink = true resample.peaks = true node.name = vss-channel-meter "
-                      "node.description = \"Channel meter\" node.dont-reconnect = true media.role = Monitor }",
+                      "node.description = \"Channel meter\" node.autoconnect = false media.role = Monitor }",
                 "--rate", str(self.METER_RATE),
                 "--channels", str(len(self.METER_CHANNELS)),
                 "--channel-map", ",".join(self.METER_CHANNELS),
@@ -1222,22 +1224,57 @@ class Plugin:
         except Exception as e:
             decky.logger.error("Channel meter: unable to start pw-record: %s", e)
             return
-        decky.logger.info("Channel meter started (pid %s) on '%s'", process.pid, device_name)
         self._meter_process = process
-        self._meter_task = asyncio.get_event_loop().create_task(self._channel_meter_reader(process))
+        if not await self._link_channel_meter(device_name):
+            decky.logger.error("Channel meter: unable to link the meter to '%s'", device_name)
+            await self._stop_channel_meter(cancel_reader=False)
+            return
+        decky.logger.info("Channel meter started (pid %s) on '%s'", process.pid, device_name)
+        self._meter_task = asyncio.get_event_loop().create_task(self._channel_meter_reader(process, device_name))
 
-    async def _channel_meter_reader(self, process):
+    async def _link_channel_meter(self, device_name: str) -> bool:
+        """Links every monitor port of the surround device to the meter input of the same channel."""
+        env = subprocess_exec_env()
+        wanted = [f"vss-channel-meter:input_{ch}" for ch in self.METER_CHANNELS]
+        for _ in range(20):
+            proc = await asyncio.create_subprocess_exec(
+                "pw-link", "-i", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=env)
+            out, _ = await proc.communicate()
+            ports = {line.strip() for line in out.decode(errors="replace").splitlines()}
+            if all(port in ports for port in wanted):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            return False
+        ok = True
+        for ch in self.METER_CHANNELS:
+            proc = await asyncio.create_subprocess_exec(
+                "pw-link", f"{device_name}:monitor_{ch}", f"vss-channel-meter:input_{ch}",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE, env=env)
+            _, err = await proc.communicate()
+            if proc.returncode != 0 and b"exists" not in err.lower():
+                decky.logger.warning("Channel meter: linking %s failed: %s", ch, err.decode(errors="replace").strip())
+                ok = False
+        return ok
+
+    async def _channel_meter_reader(self, process, device_name: str):
         import struct
         frame_size = 4 * len(self.METER_CHANNELS)
         fmt = "<" + "f" * len(self.METER_CHANNELS)
         buffer = b""
+        silent_reads = 0
         try:
             while time.monotonic() - getattr(self, "_meter_last_poll", 0.0) <= self.METER_IDLE_TIMEOUT:
                 try:
                     chunk = await asyncio.wait_for(process.stdout.read(frame_size * 8), timeout=1.0)
                 except asyncio.TimeoutError:
-                    # No data: nothing is playing and the sink is suspended. Levels stay at 0.
+                    # No data: nothing is playing and the sink is suspended, or the surround device was
+                    # re-created (service restart) and the links are gone. Re-link every few seconds.
+                    silent_reads += 1
+                    if silent_reads % 3 == 0:
+                        await self._link_channel_meter(device_name)
                     continue
+                silent_reads = 0
                 if not chunk:
                     break  # pw-record exited (e.g. the sink was removed)
                 buffer += chunk
