@@ -881,7 +881,7 @@ speaker_test() {
         echo "ERROR! Sink '${pulse_sink_name}' does not exist. Aborting sound test." >&2
         exit 1
     fi
-    if [[ "${pulse_sink_name}" == "${virtual_surround_filter_sink_capture_node_name:?}" ]]; then
+    if [[ "${pulse_sink_name}" == "${virtual_surround_filter_sink_capture_node_name:?}" || "${pulse_sink_name}" == "${virtual_surround_device_sink_capture_node_name:?}" ]]; then
         if ! wait_for_filter_linked 40; then
             echo "WARNING! Filter output is not linked to an output device yet." >&2
         fi

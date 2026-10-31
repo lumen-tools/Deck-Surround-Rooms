@@ -1282,8 +1282,10 @@ class Plugin:
         """
         sink_name = None
         if sink in ("virtual-surround", "virtual-surround-sound-filter"):
-            filter_name, _ = await get_virtual_surround_sink_names()
-            sink_name = filter_name
+            # Play into the "Virtual Surround Sound" device (the same input the apps use), so the test
+            # takes the same path as game audio and shows up in the channel meter.
+            _, device_name = await get_virtual_surround_sink_names()
+            sink_name = device_name
         elif sink == "default":
             fallback_sink_id = await self.get_highest_priority_sink_id()
             if fallback_sink_id is not None:
