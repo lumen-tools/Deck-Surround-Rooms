@@ -749,9 +749,32 @@ class Plugin:
         return bool(settings.getSetting("surround_enabled", settings.getSetting("surround_sink_default", True)))
 
     async def set_surround_enabled(self, enabled: bool) -> bool:
+        """Switches surround on/off and only returns once all apps are actually on the new output."""
         decky.logger.info("Virtual surround %s", "enabled" if enabled else "disabled")
         settings.setSetting("surround_enabled", bool(enabled))
-        await self.check_state()
+        for attempt in range(10):
+            await self.check_state()
+            if await self._routing_is_applied(bool(enabled)):
+                return True
+            await asyncio.sleep(0.3)
+        decky.logger.warning("Surround switch: not all apps could be moved")
+        return False
+
+    async def _routing_is_applied(self, enabled: bool) -> bool:
+        filter_name, device_name = await get_virtual_surround_sink_names()
+        sinks = await self.list_sinks() or []
+        surround_indices = {
+            self._sink_index_from_entry(sink) for sink in sinks
+            if sink.get("name") in (filter_name, device_name)
+        }
+        if enabled and not surround_indices:
+            return False
+        for sink_input in await self.list_sink_inputs() or []:
+            if self._is_internal_stream(sink_input) or self._sink_input_target_object(sink_input).strip():
+                continue
+            on_surround = self._parse_int(sink_input.get("sink"), -1) in surround_indices
+            if on_surround != enabled:
+                return False
         return True
 
     # Kept for the CLI

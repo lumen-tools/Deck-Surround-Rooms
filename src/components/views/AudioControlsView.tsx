@@ -8,6 +8,7 @@ import {
   PanelSectionRow,
   Router,
   SliderField,
+  Spinner,
   ToggleField,
 } from '@decky/ui'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -40,12 +41,16 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
   const [surroundEnabled, setSurroundEnabled] = useState<boolean | null>(null)
   const [hrirFiles, setHrirFiles] = useState<HrirFile[]>([])
   const [isApplyingHrir, setIsApplyingHrir] = useState<boolean>(false)
+  const [isSwitching, setIsSwitching] = useState<boolean>(false)
+  const isSwitchingRef = useRef<boolean>(false)
 
   const refreshState = async () => {
     const currentRunningApp = Router.MainRunningApp
     setRunningApp(currentRunningApp ? { display_name: currentRunningApp.display_name } : null)
     try {
-      setSurroundEnabled(!!(await call<[], boolean>('get_surround_enabled')))
+      const enabled = !!(await call<[], boolean>('get_surround_enabled'))
+      // Don't let the background refresh flip the switch back while a switch is in progress.
+      if (!isSwitchingRef.current) setSurroundEnabled(enabled)
     } catch (error) {
       console.error('[decky-virtual-surround-sound:AudioControlsView] Error refreshing state:', error)
     }
@@ -59,10 +64,21 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     }
   }
 
+  // The switch shows the new position right away, but stays locked with a spinner until the backend
+  // has changed the default output and moved the running apps (that takes a few seconds).
   const toggleSurround = async (enabled: boolean) => {
+    isSwitchingRef.current = true
+    setIsSwitching(true)
     setSurroundEnabled(enabled)
-    await call<[enabled: boolean], boolean>('set_surround_enabled', enabled)
-    await refreshState()
+    try {
+      await call<[enabled: boolean], boolean>('set_surround_enabled', enabled)
+    } catch (error) {
+      console.error('[decky-virtual-surround-sound:AudioControlsView] Error switching surround:', error)
+    } finally {
+      isSwitchingRef.current = false
+      setIsSwitching(false)
+      await refreshState()
+    }
   }
 
   const selectHrir = async (path: string) => {
@@ -212,9 +228,14 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
       <PanelSection>
         <PanelSectionRow>
           <ToggleField
-            label="Virtual Surround"
+            label={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                Virtual Surround
+                {isSwitching && <Spinner style={{ width: '16px', height: '16px' }} />}
+              </span>
+            }
             checked={!!surroundEnabled}
-            disabled={surroundEnabled === null}
+            disabled={surroundEnabled === null || isSwitching}
             onChange={(enabled) => toggleSurround(enabled)}
           />
         </PanelSectionRow>
