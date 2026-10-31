@@ -1,10 +1,10 @@
-> **Fork notice:** This is a fork of [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5, maintained by [lumen-tools](https://github.com/lumen-tools/decky-virtual-surround-sound).
+> **Fork notice:** This is a fork of [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5, maintained by [lumen-tools](https://github.com/lumen-tools/decky-virtual-surround-rooms).
 
-# Decky Virtual Surround Sound
+# Virtual Surround + Rooms
 
-[![Chat](https://img.shields.io/badge/chat-on%20discord-7289da.svg)](https://streamingtech.co.nz/discord)
+> **No sound after switching?** Change the volume briefly (up or down). The sound comes back immediately.
 
-Decky Virtual Surround Sound is a Decky plugin that provides a virtual audio output device—**Virtual Surround Sound**—for games and applications. By using a custom Pipewire filter-chain module, this plugin converts 7.1 surround sound into immersive binaural audio tailored for headphone use.
+Virtual Surround + Rooms is a Decky plugin that provides a virtual audio output device—**Virtual Surround + Rooms**—for games and applications. By using a custom Pipewire filter-chain module, this plugin converts 7.1 surround sound into immersive binaural audio tailored for headphone use.
 
 > **Note:** This solution is optimized for headphone listeners. While it may work for games targeting surround sound outputs (such as theatre systems), if the game natively supports surround-to-headphone processing, that option is recommended.
 
@@ -13,9 +13,9 @@ Users of this plugin are able to place a custom .wav from the HRTF Database (<ht
 ## Features
 
 - **Custom Pipewire Filter-Chain:** Loads/unloads a custom filter-chain module via a script to process audio.
-- **Binaural Audio Processing:** Uses HRIR-based filtering to convert 7.1 surround audio into binaural output.
+- **Binaural Audio Processing:** Convolves 7.1 surround audio with binaural room impulse responses (BRIRs) for headphone output.
 - **Room Presets:** Eight real rooms, from broadcast studios to a lecture hall, measured with dummy heads.
-- **Per-App/Game Enablement:** Activate the virtual surround sound output on a per-game or per-application basis through the plugin UI.
+- **One Switch:** Turns virtual surround on or off for all apps and games.
 - **User-Friendly Interface:** Easily enable/disable the effect without complex configuration.
 
 ## Prerequisites
@@ -38,7 +38,7 @@ Please make sure to install pnpm v9 to prevent issues with CI during plugin subm
 npm i -g pnpm@9
 ```
 
-### Building Virtual Surround Sound
+### Building Virtual Surround + Rooms
 
 1. Clone the repository.
 2. In your local fork/own plugin-repository run these commands:
@@ -96,7 +96,7 @@ python ./main.py
 
 ## Notes on how this works on SteamOS
 
-SteamOS ships with PipeWire for low-latency audio handling and WirePlumber as its default session manager. WirePlumber negotiates which nodes become available to the desktop and what devices Steam exposes in Settings, while PipeWire handles the actual DSP graph. Decky Virtual Surround Sound slots into that graph by loading a custom `module-filter-chain` definition that mixes 7.1 input down to binaural headphone output.
+SteamOS ships with PipeWire for low-latency audio handling and WirePlumber as its default session manager. WirePlumber negotiates which nodes become available to the desktop and what devices Steam exposes in Settings, while PipeWire handles the actual DSP graph. Virtual Surround + Rooms slots into that graph by loading a custom `module-filter-chain` definition that mixes 7.1 input down to binaural headphone output.
 
 Instead of dropping a static filter-chain file into `~/.config/pipewire`, the plugin installs a user-level systemd unit that calls `service.sh`. The script dynamically loads and unloads the filter through PipeWire's CLI so the module is registered immediately, without needing to restart PipeWire or WirePlumber (those restarts tend to upset Steam until you reboot the client). This approach also keeps Steam's Audio Output list clean: the filter is advertised directly to PipeWire so it just appears as another routable node rather than an extra, confusing device entry inside Steam Settings.
 

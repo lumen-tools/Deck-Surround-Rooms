@@ -23,15 +23,15 @@ const currentProfileListener = () => {
 }
 
 export default definePlugin(() => {
-  console.log('[decky-virtual-surround-sound:index] Plugin initializing.')
+  console.log('[decky-virtual-surround-rooms:index] Plugin initializing.')
 
   const unregisterCurrentProfileListener = currentProfileListener()
 
   return {
     // The name shown in various decky menus
-    name: 'Virtual Surround Sound',
+    name: 'Virtual Surround + Rooms',
     // The element displayed at the top of your plugin's menu
-    titleView: <div>Virtual Surround Sound</div>,
+    titleView: <div>Virtual Surround + Rooms</div>,
     // Preserve the plugin's state while the QAM is closed
     alwaysRender: true,
     // The content of your plugin's menu
@@ -40,7 +40,7 @@ export default definePlugin(() => {
     icon: <MdSurroundSound />,
     // The function triggered when your plugin unloads
     onDismount() {
-      console.log('[decky-virtual-surround-sound:index] Unloading background profile listener.')
+      console.log('[decky-virtual-surround-rooms:index] Unloading background profile listener.')
       if (unregisterCurrentProfileListener) unregisterCurrentProfileListener()
     },
   }

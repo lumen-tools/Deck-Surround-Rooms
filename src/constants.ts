@@ -3,7 +3,7 @@ import { Router } from '@decky/ui'
 import { call } from '@decky/api'
 
 // Links shown in the settings page
-export const FORK_REPO_URL = 'https://github.com/lumen-tools/decky-virtual-surround-sound'
+export const FORK_REPO_URL = 'https://github.com/lumen-tools/decky-virtual-surround-rooms'
 export const ORIGINAL_REPO_URL = 'https://github.com/DeckSettings/decky-virtual-surround-sound'
 
 export const restartSteamClient = (): void => {
@@ -123,7 +123,7 @@ export const getPluginConfig = (): PluginConfig => {
         window.localStorage.setItem(pluginSettingsKey, JSON.stringify(config))
       }
     } catch (error) {
-      console.error('[decky-virtual-surround-sound:constants] Failed to parse plugin config:', error)
+      console.error('[decky-virtual-surround-rooms:constants] Failed to parse plugin config:', error)
     }
   }
   // If the installation ID is not present, generate one and save it.
@@ -139,7 +139,7 @@ export const clearPluginConfig = (): void => {
   try {
     window.localStorage.removeItem(pluginSettingsKey)
   } catch (error) {
-    console.error('[decky-virtual-surround-sound:constants] Failed to clear plugin config:', error)
+    console.error('[decky-virtual-surround-rooms:constants] Failed to clear plugin config:', error)
   }
 }
 
@@ -150,7 +150,7 @@ export const setPluginConfig = (updates: Partial<PluginConfig>): void => {
   try {
     window.localStorage.setItem(pluginSettingsKey, JSON.stringify(newConfig))
   } catch (error) {
-    console.error('[decky-virtual-surround-sound:constants] Failed to save plugin config:', error)
+    console.error('[decky-virtual-surround-rooms:constants] Failed to save plugin config:', error)
   }
 }
 

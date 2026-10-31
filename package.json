@@ -1,7 +1,7 @@
 {
-  "name": "decky-virtual-surround-sound",
+  "name": "decky-virtual-surround-rooms",
   "version": "0.1.6",
-  "description": "Create a virtual surround sound audio sink that converts 7.1 surround audio into immersive binaural output for headphones via HRIR processing with room presets measured in real studios and rooms.",
+  "description": "Virtual 7.1 surround for headphones with room simulation, using room presets measured in real studios and rooms.",
   "type": "module",
   "engines": {
     "node" : ">=18.0.0 <25.0.0"
@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lumen-tools/decky-virtual-surround-sound.git"
+    "url": "git+https://github.com/lumen-tools/decky-virtual-surround-rooms.git"
   },
   "keywords": [
     "audio",
@@ -26,9 +26,9 @@
   "author": "lumen-tools (based on the original by Josh.5 <jsunnex@gmail.com>)",
   "license": "BSD-3-Clause",
   "bugs": {
-    "url": "https://github.com/lumen-tools/decky-virtual-surround-sound/issues"
+    "url": "https://github.com/lumen-tools/decky-virtual-surround-rooms/issues"
   },
-  "homepage": "https://github.com/lumen-tools/decky-virtual-surround-sound#readme",
+  "homepage": "https://github.com/lumen-tools/decky-virtual-surround-rooms#readme",
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.1",

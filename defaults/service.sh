@@ -32,17 +32,17 @@ lfe_cutoff_hz="120"
 
 # Configure pipewire modules names/descriptions
 virtual_surround_filter_sink_node_name="vss-filter"
-virtual_surround_filter_sink_description="Virtual Surround Sound Filter"
+virtual_surround_filter_sink_description="Virtual Surround + Rooms Filter"
 virtual_surround_filter_sink_capture_node_name="input.vss-filter"
 virtual_surround_filter_sink_playback_node_name="output.vss-filter"
 if [[ -n "${VIRTUAL_SURROUND_SINK_SUFFIX:-}" ]]; then
     virtual_surround_filter_sink_node_name="vss-filter"
-    virtual_surround_filter_sink_description="Virtual Surround Sound (${VIRTUAL_SURROUND_SINK_SUFFIX:-})"
+    virtual_surround_filter_sink_description="Virtual Surround + Rooms (${VIRTUAL_SURROUND_SINK_SUFFIX:-})"
     virtual_surround_filter_sink_capture_node_name="input.vss-filter-${VIRTUAL_SURROUND_SINK_SUFFIX:-}"
     virtual_surround_filter_sink_playback_node_name="output.vss-filter-${VIRTUAL_SURROUND_SINK_SUFFIX:-}"
 fi
 virtual_surround_device_sink_node_name="virtual-surround-sound"
-virtual_surround_device_sink_description="Virtual Surround Sound"
+virtual_surround_device_sink_description="Virtual Surround + Rooms"
 virtual_surround_device_sink_capture_node_name="Virtual Surround Sound"
 virtual_surround_device_sink_playback_node_name="output.virtual-surround-sound"
 

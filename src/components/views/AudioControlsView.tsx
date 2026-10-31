@@ -52,7 +52,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
       // Don't let the background refresh flip the switch back while a switch is in progress.
       if (!isSwitchingRef.current) setSurroundEnabled(enabled)
     } catch (error) {
-      console.error('[decky-virtual-surround-sound:AudioControlsView] Error refreshing state:', error)
+      console.error('[decky-virtual-surround-rooms:AudioControlsView] Error refreshing state:', error)
     }
   }
 
@@ -60,7 +60,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     try {
       setHrirFiles((await call<[], HrirFile[]>('get_hrir_file_list')) ?? [])
     } catch (error) {
-      console.error('[decky-virtual-surround-sound:AudioControlsView] Error loading HRIR list:', error)
+      console.error('[decky-virtual-surround-rooms:AudioControlsView] Error loading HRIR list:', error)
     }
   }
 
@@ -73,7 +73,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     try {
       await call<[enabled: boolean], boolean>('set_surround_enabled', enabled)
     } catch (error) {
-      console.error('[decky-virtual-surround-sound:AudioControlsView] Error switching surround:', error)
+      console.error('[decky-virtual-surround-rooms:AudioControlsView] Error switching surround:', error)
     } finally {
       isSwitchingRef.current = false
       setIsSwitching(false)
@@ -109,7 +109,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
 
   // Toggle per-app profiles and update the mixer profile afterward.
   const togglePerAppProfiles = async (enabled: boolean) => {
-    console.log(`[decky-virtual-surround-sound:AudioControlsView] Toggle per-app profile: ${enabled}`)
+    console.log(`[decky-virtual-surround-rooms:AudioControlsView] Toggle per-app profile: ${enabled}`)
     setUsePerAppProfiles(enabled)
     if (runningApp?.display_name) {
       const existingProfile = getPluginConfig().perAppProfiles?.[runningApp.display_name]
@@ -134,7 +134,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
 
   const updateChannelVolume = useCallback(
     async (channel: string, value: number) => {
-      console.log(`[decky-virtual-surround-sound] Setting ${channel} volume to ${value}`)
+      console.log(`[decky-virtual-surround-rooms] Setting ${channel} volume to ${value}`)
       const updatedVolumes = { ...mixerVolumes, [channel]: value }
       const mixerProfile: MixerProfile = {
         name: profile,
@@ -234,17 +234,18 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
                 {isSwitching && <Spinner style={{ width: '16px', height: '16px' }} />}
               </span>
             }
+            description="No sound? Change the volume briefly."
             checked={!!surroundEnabled}
             disabled={surroundEnabled === null || isSwitching}
             onChange={(enabled) => toggleSurround(enabled)}
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <Field label="HRIR" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
+          <Field label="Room" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
             <Dropdown
               rgOptions={hrirFiles.map((file) => ({ label: file.label, data: file.path }))}
               selectedOption={activeHrir?.path}
-              strDefaultLabel="Select HRIR"
+              strDefaultLabel="Select room"
               disabled={isApplyingHrir || hrirFiles.length === 0}
               onChange={(option) => selectHrir(option.data)}
             />

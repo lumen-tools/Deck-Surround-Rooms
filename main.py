@@ -154,7 +154,7 @@ hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wa
 
 # Bump this whenever the filter graph in service.sh changes so that an already running
 # systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
-SERVICE_GRAPH_VERSION = 4
+SERVICE_GRAPH_VERSION = 5
 # Bump this whenever the HRIR preparation (normalisation) changes.
 HRIR_PREPARE_VERSION = 1
 
@@ -1970,7 +1970,7 @@ class CLIMenu:
             ("List running apps (sink inputs)", self.list_sink_inputs_action),
             ("Get highest priority sink", self.highest_priority_sink_action),
             ("Get default sink", self.default_sink_action),
-            ("Toggle Virtual Surround Sound on/off", self.toggle_default_surround_action),
+            ("Toggle Virtual Surround + Rooms on/off", self.toggle_default_surround_action),
             ("List HRIR files", self.list_hrir_files_action),
             ("Set HRIR file", self.set_hrir_file_action),
             ("List SOFA files", self.list_sofa_files_action),
@@ -2087,10 +2087,10 @@ class CLIMenu:
         current = bool(self.helper.run(self.plugin.get_surround_sink_default()))
         if current:
             self.helper.run(self.plugin.disable_surround_sink_default())
-            self._show_message(stdscr, "Virtual Surround", "Virtual Surround Sound is now off.")
+            self._show_message(stdscr, "Virtual Surround", "Virtual Surround + Rooms is now off.")
         else:
             self.helper.run(self.plugin.enable_surround_sink_default())
-            self._show_message(stdscr, "Virtual Surround", "Virtual Surround Sound is now on.")
+            self._show_message(stdscr, "Virtual Surround", "Virtual Surround + Rooms is now on.")
 
     def list_hrir_files_action(self, stdscr):
         files = self.helper.run(self.plugin.get_hrir_file_list()) or []
@@ -2234,7 +2234,7 @@ class CLIMenu:
         while True:
             selection = self._navigate_menu(
                 stdscr,
-                "Decky Virtual Surround Sound",
+                "Virtual Surround + Rooms",
                 labels + ["Exit"],
                 "↑/↓ navigate • Enter select • q exit"
             )
@@ -2252,7 +2252,7 @@ class CLIMenu:
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Decky Virtual Surround Sound CLI")
+    parser = argparse.ArgumentParser(description="Virtual Surround + Rooms CLI")
     parser.add_argument("--menu", action="store_true", help="Launch the curses menu UI")
     parser.add_argument("--list-sinks", action="store_true", help="List available sinks")
     parser.add_argument("--list-running-apps", action="store_true", help="List sink inputs (running apps)")

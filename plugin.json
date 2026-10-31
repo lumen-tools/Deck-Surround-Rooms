@@ -1,5 +1,5 @@
 {
-  "name": "Virtual Surround Sound",
+  "name": "Virtual Surround + Rooms",
   "author": "lumen-tools (based on Josh.5)",
   "flags": [],
   "api_version": 1,
@@ -13,7 +13,7 @@
       "binaural",
       "spatializer"
     ],
-    "description": "Create a virtual surround sound audio sink that converts 7.1 surround audio into immersive binaural output for headphones via HRIR processing with room presets measured in real studios and rooms.",
-    "image": "https://raw.githubusercontent.com/lumen-tools/decky-virtual-surround-sound/master/assets/screenshot_1.jpg"
+    "description": "Virtual 7.1 surround for headphones with room simulation, using room presets measured in real studios and rooms.",
+    "image": "https://raw.githubusercontent.com/lumen-tools/decky-virtual-surround-rooms/master/assets/screenshot_1.jpg"
   }
 }
