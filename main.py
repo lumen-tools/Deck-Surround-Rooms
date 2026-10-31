@@ -672,13 +672,23 @@ class Plugin:
 
     async def background_tasks(self):
         decky.logger.info("Background tasks started")
+        fast_retries = 0
         while not self.stop_event.is_set():
             try:
                 # decky.logger.info("Running task to ensure applications are assigned to their configured sinks")
                 await self.check_state()
-                # Wait for 10 seconds, or exit early if stop_event is set.
+                # Normally re-check every 10 s. While the service is still starting or not every app is
+                # on the right output yet, re-check every second so it is fixed right away.
+                interval = 10
+                with contextlib.suppress(Exception):
+                    if await self._routing_is_applied(await self.get_surround_enabled()):
+                        fast_retries = 0
+                    elif fast_retries < 20:
+                        # Limited, so an app that can't be moved doesn't cause a check every second forever.
+                        fast_retries += 1
+                        interval = 1
                 try:
-                    await asyncio.wait_for(self.stop_event.wait(), timeout=10)
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=interval)
                 except asyncio.TimeoutError:
                     # Timeout occurred: continue loop.
                     pass
@@ -753,6 +763,11 @@ class Plugin:
         """Switches surround on/off and only returns once all apps are actually on the new output."""
         decky.logger.info("Virtual surround %s", "enabled" if enabled else "disabled")
         settings.setSetting("surround_enabled", bool(enabled))
+        # Right after installing/updating the plugin the surround service is still starting. Wait for
+        # it instead of giving up, otherwise the switch is "on" but nothing is routed yet.
+        if not await self._wait_for_surround_sinks(timeout=20.0):
+            decky.logger.warning("Surround switch: virtual surround sinks are not available")
+            return False
         for attempt in range(10):
             await self.check_state()
             if await self._routing_is_applied(bool(enabled)):
@@ -760,6 +775,22 @@ class Plugin:
             await asyncio.sleep(0.3)
         decky.logger.warning("Surround switch: not all apps could be moved")
         return False
+
+    async def _surround_sinks_ready(self) -> bool:
+        filter_name, device_name = await get_virtual_surround_sink_names()
+        if not filter_name or not device_name:
+            return False
+        names = {sink.get("name") for sink in await self.list_sinks() or []}
+        return filter_name in names and device_name in names
+
+    async def _wait_for_surround_sinks(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while True:
+            if await self._surround_sinks_ready():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.5)
 
     async def _routing_is_applied(self, enabled: bool) -> bool:
         filter_name, device_name = await get_virtual_surround_sink_names()
@@ -769,7 +800,7 @@ class Plugin:
             self._sink_index_from_entry(sink) for sink in sinks
             if sink.get("name") in (filter_name, device_name)
         }
-        if enabled and not surround_indices:
+        if enabled and len(surround_indices) < 2:
             return False
         for sink_input in await self.list_sink_inputs() or []:
             if self._is_internal_stream(sink_input) or self._is_pinned_elsewhere(sink_input, managed_targets):
@@ -869,7 +900,9 @@ class Plugin:
             return
         virtual_surround_device_object_id = self._object_id_from_sink(virtual_surround_device_sink)
         virtual_surround_device_index = self._sink_index_from_entry(virtual_surround_device_sink)
-        virtual_surround_target_index = virtual_surround_device_index if virtual_surround_device_index is not None else virtual_surround_index
+        # Apps are only ever routed to the "Virtual Surround Sound" device sink, never directly into the
+        # filter. While the service is starting the device sink may not exist yet; routing then waits.
+        virtual_surround_target_index = virtual_surround_device_index
 
         # Determine the default_sink_id and default_sink_index
         default_sink_id: int | None = None

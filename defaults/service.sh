@@ -945,7 +945,9 @@ install_service() {
     echo "  - Exec daemon-reload"
     systemctl --user daemon-reload
     echo "  - Enabling systemd unit"
-    systemctl --user enable --now "${service_name:?}"
+    # Only enable here; the service is (re)started exactly once below. "enable --now" followed by
+    # "restart" started it twice, and the first instance was torn down again a few seconds later.
+    systemctl --user enable "${service_name:?}"
     local start_cmd="start"
     if [[ "${restart_after_install:-}" == "true" ]]; then
         start_cmd="restart"
