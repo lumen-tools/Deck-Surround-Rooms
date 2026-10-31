@@ -1,6 +1,6 @@
 {
   "name": "decky-virtual-surround-rooms",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Virtual 7.1 surround for headphones with room simulation, using room presets measured in real studios and rooms.",
   "type": "module",
   "engines": {
