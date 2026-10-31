@@ -3,8 +3,17 @@ import { call } from '@decky/api'
 
 // Order of the levels returned by the backend (get_channel_levels).
 const METER_CHANNELS = ['FL', 'FR', 'FC', 'LFE', 'RL', 'RR', 'SL', 'SR']
-// Speaker layout as seen from above, listener in the middle.
-const LAYOUT: (string | null)[] = ['FL', 'FC', 'FR', 'SL', null, 'SR', 'RL', 'LFE', 'RR']
+// Displayed left to right in the ITU-R BS.775 / SMPTE 7.1 order with studio channel names.
+const DISPLAY: { code: string; label: string }[] = [
+  { code: 'FL', label: 'L' },
+  { code: 'FR', label: 'R' },
+  { code: 'FC', label: 'C' },
+  { code: 'LFE', label: 'LFE' },
+  { code: 'SL', label: 'Lss' },
+  { code: 'SR', label: 'Rss' },
+  { code: 'RL', label: 'Lrs' },
+  { code: 'RR', label: 'Rrs' },
+]
 const POLL_INTERVAL_MS = 100
 // Levels below -60 dBFS count as silence.
 const FLOOR_DB = -60
@@ -48,9 +57,8 @@ const ChannelMeter: React.FC = () => {
   }, [])
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px', padding: '4px 0' }}>
-      {LAYOUT.map((code, index) => {
-        if (!code) return <div key={`gap-${index}`} />
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: '3px', padding: '4px 0' }}>
+      {DISPLAY.map(({ code, label }) => {
         const intensity = levelToIntensity(levels[METER_CHANNELS.indexOf(code)])
         const lit = intensity > 0
         return (
@@ -62,9 +70,8 @@ const ChannelMeter: React.FC = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '11px',
+              fontSize: '10px',
               fontWeight: 600,
-              letterSpacing: '0.5px',
               color: lit ? '#ffffff' : 'rgba(255, 255, 255, 0.35)',
               backgroundColor: lit
                 ? `rgba(26, 159, 255, ${(0.25 + 0.75 * intensity).toFixed(2)})`
@@ -72,7 +79,7 @@ const ChannelMeter: React.FC = () => {
               transition: 'background-color 80ms linear, color 80ms linear',
             }}
           >
-            {code}
+            {label}
           </div>
         )
       })}
