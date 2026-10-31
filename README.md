@@ -8,7 +8,13 @@ Virtual Surround + Rooms is a Decky plugin that provides a virtual audio output 
 
 Users of this plugin are able to place a custom .wav from the HRTF Database (<https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>) at `~/.config/pipewire/hrir.wav`. Note that changing presets in the plugin config will overwrite this file. Set the file to read-only to prevent this from happening.
 
-## Improvements over the original
+## What is different from the original
+
+### Room simulation instead of plain virtualisation
+
+Most headphone virtualisers convolve the audio with anechoic head-related impulse responses (HRIRs). These only describe the direct sound from each speaker to the ears, which tends to sound like it is coming from inside the head. Virtual Surround + Rooms uses binaural room impulse responses (BRIRs) measured in real studios and rooms instead. They also contain the early reflections and the reverberation of the room, which gives much better externalisation (out-of-head localisation) and a natural sense of distance, as if listening to a real 7.1 speaker setup in that room.
+
+### Bug fixes and improvements
 
 Virtual Surround + Rooms is based on [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5 and continues it with many bug fixes and improvements:
 

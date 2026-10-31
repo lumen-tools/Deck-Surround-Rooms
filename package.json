@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lumen-tools/decky-virtual-surround-rooms.git"
+    "url": "git+https://github.com/lumen-tools/Virtual-Surround-Rooms.git"
   },
   "keywords": [
     "audio",
@@ -26,9 +26,9 @@
   "author": "lumen-tools (based on the original by Josh.5 <jsunnex@gmail.com>)",
   "license": "BSD-3-Clause",
   "bugs": {
-    "url": "https://github.com/lumen-tools/decky-virtual-surround-rooms/issues"
+    "url": "https://github.com/lumen-tools/Virtual-Surround-Rooms/issues"
   },
-  "homepage": "https://github.com/lumen-tools/decky-virtual-surround-rooms#readme",
+  "homepage": "https://github.com/lumen-tools/Virtual-Surround-Rooms#readme",
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.1",
