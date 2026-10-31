@@ -1,5 +1,3 @@
-> **Fork notice:** This is a fork of [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5, maintained by [lumen-tools](https://github.com/lumen-tools/decky-virtual-surround-rooms).
-
 # Virtual Surround + Rooms
 
 > **No sound after switching?** Change the volume briefly (up or down). The sound comes back immediately.
@@ -9,6 +7,17 @@ Virtual Surround + Rooms is a Decky plugin that provides a virtual audio output 
 > **Note:** This solution is optimized for headphone listeners. While it may work for games targeting surround sound outputs (such as theatre systems), if the game natively supports surround-to-headphone processing, that option is recommended.
 
 Users of this plugin are able to place a custom .wav from the HRTF Database (<https://airtable.com/appayGNkn3nSuXkaz/shruimhjdSakUPg2m/tbloLjoZKWJDnLtTc>) at `~/.config/pipewire/hrir.wav`. Note that changing presets in the plugin config will overwrite this file. Set the file to read-only to prevent this from happening.
+
+## Improvements over the original
+
+Virtual Surround + Rooms is based on [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5 and continues it with many bug fixes and improvements:
+
+- **Correct channels and levels:** Every speaker is normalised to the same loudness, left and right are symmetric, and switching presets no longer changes the volume. The test tone no longer varies from run to run.
+- **Real rooms with clear licences:** The presets derived from commercial products, whose licensing was unclear, were replaced with eight freely licensed measurements of real studios and rooms.
+- **No double volume:** The output volume is no longer applied twice, so the headphones don't have to be turned up artificially.
+- **Reliable switching:** One switch for all apps, a loading indicator, and fixes for delayed switching, silence after turning surround back on and dropouts when changing the room.
+- **Sound test:** Plays clockwise from front left and ends with the subwoofer, with and without surround, or for a single speaker.
+- **Cleaner interface:** The mixer fits on the screen, unnecessary options and texts were removed, and a full reset is one click away.
 
 ## Features
 
