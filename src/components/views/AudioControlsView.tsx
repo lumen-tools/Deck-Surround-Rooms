@@ -13,7 +13,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MdSettings } from 'react-icons/md'
 import { call } from '@decky/api'
-import { HrirFile, MixerProfile, PluginConfig, PluginPage, RunningApp, Source } from '../../interfaces'
+import { HrirFile, MixerProfile, PluginConfig, PluginPage, RunningApp } from '../../interfaces'
 import {
   defaultMixerProfile,
   defaultMixerVolumes,
@@ -28,12 +28,6 @@ interface AudioControlsViewProps {
   onChangePage: (page: PluginPage) => void
 }
 
-const statusLabel: Record<Source['status'], string> = {
-  surround: 'Surround',
-  direct: 'Stereo',
-  pinned: 'Own output',
-}
-
 const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) => {
   const [currentConfig, setCurrentConfig] = useState<PluginConfig | null>(null)
   const [runningApp, setRunningApp] = useState<RunningApp | null>(null)
@@ -44,7 +38,6 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     defaultMixerProfile.volumes,
   )
   const [surroundEnabled, setSurroundEnabled] = useState<boolean | null>(null)
-  const [sources, setSources] = useState<Source[]>([])
   const [hrirFiles, setHrirFiles] = useState<HrirFile[]>([])
   const [isApplyingHrir, setIsApplyingHrir] = useState<boolean>(false)
 
@@ -53,7 +46,6 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     setRunningApp(currentRunningApp ? { display_name: currentRunningApp.display_name } : null)
     try {
       setSurroundEnabled(!!(await call<[], boolean>('get_surround_enabled')))
-      setSources((await call<[], Source[]>('get_sources')) ?? [])
     } catch (error) {
       console.error('[decky-virtual-surround-sound:AudioControlsView] Error refreshing state:', error)
     }
@@ -238,20 +230,6 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
           </Field>
         </PanelSectionRow>
       </PanelSection>
-
-      {sources.length > 0 && (
-        <PanelSection title="Sources">
-          {sources.map((source) => (
-            <PanelSectionRow key={source.name}>
-              <Field label={source.name} bottomSeparator="none" padding="compact">
-                <span style={{ fontSize: '12px', color: source.status === 'surround' ? '#1a9fff' : '#8b929a' }}>
-                  {statusLabel[source.status]}
-                </span>
-              </Field>
-            </PanelSectionRow>
-          ))}
-        </PanelSection>
-      )}
 
       <PanelSection title="Mixer">
         {runningApp && (

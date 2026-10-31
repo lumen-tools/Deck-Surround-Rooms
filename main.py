@@ -187,12 +187,24 @@ HRIR_DISPLAY_NAMES = {
 }
 
 
+def _hrir_name_key(name: str) -> str:
+    # Compare by letters and digits only: special characters such as the degree sign in
+    # "EAC Default HRTF (35°-100°-150°)" can get mangled when the plugin zip is extracted.
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+_HRIR_DISPLAY_NAMES_BY_KEY = {_hrir_name_key(k): v for k, v in HRIR_DISPLAY_NAMES.items()}
+
+
 def hrir_display_name(path: str) -> str:
     stem = os.path.splitext(os.path.basename(path))[0]
-    if stem in HRIR_DISPLAY_NAMES:
-        return HRIR_DISPLAY_NAMES[stem]
-    # Custom files: make the file name readable.
-    return re.sub(r"[_\s]+", " ", stem).strip()
+    known = _HRIR_DISPLAY_NAMES_BY_KEY.get(_hrir_name_key(stem))
+    if known:
+        return known
+    # Custom files: keep printable characters only and make the file name readable.
+    readable = "".join(c for c in stem if c.isprintable() and c != "\ufffd")
+    readable = re.sub(r"[_\s]+", " ", readable).strip()
+    return readable or "Custom HRTF"
 
 
 class UnsupportedHrirError(Exception):
@@ -761,37 +773,6 @@ class Plugin:
         if node_name.startswith("output.vss-filter") or node_name.startswith("output.virtual-surround-sound"):
             return True
         return props.get("application.process.binary") in self.INTERNAL_STREAM_BINARIES
-
-    async def get_sources(self) -> list[dict]:
-        """
-        Apps currently playing audio, for display in the UI.
-        status: "surround" (routed through the filter), "direct" (real device) or "pinned"
-        (the app selected an output itself, the plugin does not move it).
-        """
-        filter_name, device_name = await get_virtual_surround_sink_names()
-        sinks = await self.list_sinks() or []
-        surround_indices = {
-            self._sink_index_from_entry(sink) for sink in sinks
-            if sink.get("name") in (filter_name, device_name)
-        }
-        sources: dict[str, str] = {}
-        rank = {"surround": 0, "pinned": 1, "direct": 2}
-        for sink_input in await self.list_sink_inputs() or []:
-            if self._is_internal_stream(sink_input):
-                continue
-            name = sink_input.get("name") or self._sink_input_app_name(sink_input)
-            if not name:
-                continue
-            if self._parse_int(sink_input.get("sink"), -1) in surround_indices:
-                status = "surround"
-            elif self._sink_input_target_object(sink_input).strip():
-                status = "pinned"
-            else:
-                status = "direct"
-            # An app with several streams counts as surround if any stream is.
-            if name not in sources or rank[status] < rank[sources[name]]:
-                sources[name] = status
-        return [{"name": name, "status": status} for name, status in sorted(sources.items())]
 
     async def check_state(self):
         settings.read()

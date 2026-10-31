@@ -46,11 +46,6 @@ export interface HrirFile {
   active?: boolean;
 }
 
-export interface Source {
-  name: string;
-  status: 'surround' | 'direct' | 'pinned';
-}
-
 export interface SinkInputFormat {
   format: string;
   sample_format: string;
