@@ -14,9 +14,13 @@ const HeadphoneEq: React.FC = () => {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    call<[], EqState>('get_eq_state').then(setState).catch((error) => {
+    // Polled: the EQ pauses by itself when no headphones are connected, or when another output is chosen in Steam.
+    const load = () => call<[], EqState>('get_eq_state').then(setState).catch((error) => {
       console.error('[decky-virtual-surround-rooms:HeadphoneEq] Error loading EQ state:', error)
     })
+    load()
+    const timer = setInterval(load, 3000)
+    return () => clearInterval(timer)
   }, [])
 
   const openSearch = () => {

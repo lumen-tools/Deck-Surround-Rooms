@@ -26,6 +26,7 @@ import {
 } from '../../constants'
 import ChannelMeter from '../ChannelMeter'
 import HeadphoneEq from '../HeadphoneEq'
+import OutputSelect from '../OutputSelect'
 
 interface AudioControlsViewProps {
   onChangePage: (page: PluginPage) => void
@@ -208,7 +209,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     refreshState()
     loadHrirFiles()
     updateMixerProfile()
-    const interval = setInterval(refreshState, 5000)
+    const interval = setInterval(refreshState, 2000)
     return () => clearInterval(interval)
   }, [])
 
@@ -242,6 +243,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
             onChange={(enabled) => toggleSurround(enabled)}
           />
         </PanelSectionRow>
+        <OutputSelect />
         <PanelSectionRow>
           <Field label="Room" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
             <Dropdown

@@ -10,6 +10,7 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import threading
 import time
 import sys
@@ -149,6 +150,8 @@ default_hrir_file = "Studio Small - WDR Control Room 1.wav"
 pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewire")
 hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
 eq_settings_path = os.path.join(pipewire_config_path, "vss-eq.txt")
+# Real output device the surround/EQ chain plays to (read by service.sh).
+output_target_path = os.path.join(pipewire_config_path, "vss-output.txt")
 autoeq_index_cache_path = os.path.join(settings_dir, "autoeq-index.json")
 AUTOEQ_RESULTS_URL = "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results"
 # Preferred measurement sources when a headphone was measured by several (best first).
@@ -161,7 +164,7 @@ hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wa
 
 # Bump this whenever the filter graph in service.sh changes so that an already running
 # systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
-SERVICE_GRAPH_VERSION = 7
+SERVICE_GRAPH_VERSION = 8
 # Bump this whenever the HRIR preparation (normalisation) changes.
 HRIR_PREPARE_VERSION = 1
 
@@ -796,6 +799,9 @@ class Plugin:
                         if not more:
                             break
                     await self.sync_volumes()
+                    # Headphones plugged/unplugged, output chosen in Steam, ...
+                    with contextlib.suppress(Exception):
+                        await self.check_state()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -902,8 +908,17 @@ class Plugin:
 
     INTERNAL_STREAM_BINARIES = {"pw-cli", "speaker-test"}
 
-    async def get_surround_enabled(self) -> bool:
+    @staticmethod
+    def _surround_wanted() -> bool:
         return bool(settings.getSetting("surround_enabled", settings.getSetting("surround_sink_default", True)))
+
+    def _external_connected(self) -> bool:
+        # Unknown until the first check: assume yes.
+        return getattr(self, "_external_output", "?") is not None
+
+    async def get_surround_enabled(self) -> bool:
+        """What the switch shows: on only while an external output (headphones etc.) is connected."""
+        return self._surround_wanted() and self._external_connected()
 
     async def _routing_mode(self) -> str:
         """
@@ -912,7 +927,10 @@ class Plugin:
           "eq"       -> "Headphone EQ" sink (headphone EQ only, surround switched off)
           "off"      -> the real output device
         """
-        if await self.get_surround_enabled():
+        # Without headphones (or another external output) everything pauses and the speakers play directly.
+        if not self._external_connected():
+            return "off"
+        if self._surround_wanted():
             return "surround"
         if self._active_eq_profile() is not None:
             return "eq"
@@ -926,6 +944,65 @@ class Plugin:
         if mode == "eq":
             return await get_headphone_eq_sink_name()
         return None
+
+    @staticmethod
+    def _is_internal_speaker(sink: dict) -> bool:
+        """The Steam Deck's built-in speakers (never offered as output for surround/EQ)."""
+        props = sink.get("properties") or {}
+        if str(props.get("device.bus", "")).lower() in ("usb", "bluetooth"):
+            return False
+        text = " ".join(str(v).lower() for v in (
+            sink.get("active_port"), sink.get("name"), sink.get("description"), props.get("device.profile.name")))
+        return "speaker" in text
+
+    @staticmethod
+    def _is_connected(sink: dict) -> bool:
+        ports = sink.get("ports") or []
+        if not ports:
+            return True
+        active = sink.get("active_port")
+        port = next((p for p in ports if p.get("name") == active), None)
+        return str((port or {}).get("availability", "")).lower() != "not available"
+
+    async def _external_outputs(self, sinks: list[dict]) -> list[dict]:
+        """Connected real output devices except the internal speakers, highest priority first."""
+        virtual = await self._virtual_sink_names()
+        outputs = [s for s in sinks if s.get("name") not in virtual and not self._is_internal_speaker(s)
+                   and self._is_connected(s)]
+        outputs.sort(key=lambda s: -self._parse_int((s.get("properties") or {}).get("priority.session"), 0))
+        return outputs
+
+    async def _output_target(self, sinks: list[dict]) -> dict | None:
+        outputs = await self._external_outputs(sinks)
+        preferred = settings.getSetting("output_device", None)
+        return next((s for s in outputs if s.get("name") == preferred), outputs[0] if outputs else None)
+
+    async def get_outputs(self) -> dict:
+        sinks = await self.list_sinks() or []
+        target = await self._output_target(sinks)
+        return {
+            "selected": target.get("name") if target else None,
+            "outputs": [{"name": s.get("name"), "label": s.get("description") or s.get("name")}
+                        for s in await self._external_outputs(sinks)],
+        }
+
+    async def set_output(self, name: str) -> dict:
+        settings.setSetting("output_device", name)
+        await self.check_state()
+        return await self.get_outputs()
+
+    def _write_output_target(self, name: str | None):
+        if getattr(self, "_written_output_target", "?") == name:
+            return
+        self._written_output_target = name
+        with contextlib.suppress(Exception):
+            os.makedirs(pipewire_config_path, exist_ok=True)
+            with open(output_target_path, "w", encoding="utf-8") as f:
+                f.write((name or "") + "\n")
+        # Let the service re-link right away instead of on its next check.
+        with contextlib.suppress(Exception):
+            subprocess.Popen([os.path.join(script_directory, "service.sh"), "relink"], env=subprocess_exec_env(),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     async def _virtual_sink_names(self) -> set[str]:
         filter_name, device_name = await get_virtual_surround_sink_names()
@@ -956,6 +1033,7 @@ class Plugin:
         """Switches surround on/off and only returns once all apps are actually on the new output."""
         decky.logger.info("Virtual surround %s", "enabled" if enabled else "disabled")
         settings.setSetting("surround_enabled", bool(enabled))
+        self._applied_mode = None
         # Right after installing/updating the plugin the surround service is still starting; the routing
         # waits for it instead of giving up, otherwise the switch is "on" but nothing is routed yet.
         return await self._apply_routing()
@@ -1127,20 +1205,53 @@ class Plugin:
         if default_sink_id is None or default_sink_index is None:
             decky.logger.warning("Unable to determine fallback default sink; leaving default unchanged.")
 
+        # The real device behind surround/EQ: the output chosen in the plugin, or the first external one.
+        # Without any external output (only the speakers) everything pauses.
+        output = await self._output_target(sinks)
+        self._external_output = output.get("name") if output else None
+        self._write_output_target(self._external_output)
+
+        virtual_names = await self._virtual_sink_names()
+        current_default = await self.get_default_sink_name()
         mode = await self._routing_mode()
+        applied_mode = getattr(self, "_applied_mode", None)
+        # Another output was chosen in Steam while surround/EQ was on: Steam wins, turn everything off and
+        # don't fight it (no jumping back).
+        if (mode != "off" and applied_mode == mode and current_default
+                and current_default != getattr(self, "_applied_default", None)
+                and current_default not in virtual_names):
+            decky.logger.info("Output '%s' was chosen outside the plugin; turning surround and EQ off", current_default)
+            settings.setSetting("surround_enabled", False)
+            settings.setSetting("eq_enabled", False)
+            mode = "off"
+            self._applied_mode = "off"
+            self._applied_default = current_default
+
         eq_name = await get_headphone_eq_sink_name()
         eq_sink = next((sink for sink in sinks if sink.get("name") == eq_name), None)
+        real_default = next((sink for sink in sinks if sink.get("name") == current_default
+                             and current_default not in virtual_names), None)
         if mode == "surround":
             target_object_id, target_index, target_label = (
                 virtual_surround_device_object_id, virtual_surround_target_index, "Virtual Surround Sound")
         elif mode == "eq":
             target_object_id, target_index, target_label = (
                 self._object_id_from_sink(eq_sink), self._sink_index_from_entry(eq_sink), "Headphone EQ")
+        elif real_default is not None:
+            # Off: keep whatever real output is the default (the user's choice).
+            target_object_id, target_index, target_label = (
+                self._object_id_from_sink(real_default), self._sink_index_from_entry(real_default), current_default)
         else:
             target_object_id, target_index, target_label = default_sink_id, default_sink_index, "the output device"
-        if target_object_id is not None:
-            await self.set_default_sink(target_object_id)
-        else:
+        # Only change the default when the mode changes, or (when off) if it is stuck on a virtual sink.
+        target_name = next((sink.get("name") for sink in sinks if self._object_id_from_sink(sink) == target_object_id), None)
+        stuck_on_virtual = mode == "off" and (current_default in virtual_names or not current_default)
+        if (mode != applied_mode or stuck_on_virtual) and target_object_id is not None:
+            if current_default != target_name:
+                await self.set_default_sink(target_object_id)
+            self._applied_mode = mode
+            self._applied_default = target_name if mode == "off" else target_name
+        elif target_object_id is None:
             decky.logger.warning("Sink for mode '%s' not resolved; cannot update default sink.", mode)
 
         target_indices, virtual_indices = await self._target_indices(sinks, mode)
@@ -1416,7 +1527,7 @@ class Plugin:
             active = profiles[0]["id"] if profiles else None
         active_profile = next((p for p in profiles if p["id"] == active), None)
         return {
-            "enabled": bool(settings.getSetting("eq_enabled", False)) and active is not None,
+            "enabled": bool(settings.getSetting("eq_enabled", False)) and active is not None and self._external_connected(),
             "active": active,
             "profiles": [{"id": p["id"], "label": f"{p['name']} · {p['source']}"} for p in profiles],
             # For the curve display.
@@ -1529,6 +1640,7 @@ class Plugin:
         return await self.get_eq_state()
 
     async def _eq_changed(self, mode_before: str):
+        self._applied_mode = None
         await self._apply_eq()
         if await self._routing_mode() != mode_before:
             await self._apply_routing()
@@ -2087,8 +2199,11 @@ class Plugin:
         best_sink_id: int | None = None
         best_priority = -1
         best_index = -1
+        virtual_names = await self._virtual_sink_names()
 
         for sink in sinks:
+            if sink.get("name") in virtual_names:
+                continue
             obj_id = self._object_id_from_sink(sink)
             if obj_id is None:
                 continue

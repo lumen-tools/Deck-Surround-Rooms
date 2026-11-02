@@ -80,6 +80,7 @@ device_module_args_8=$(
         "media.class": "Audio/Sink",
         "node.name": "${virtual_surround_device_sink_capture_node_name:?}",
         "node.description": "${virtual_surround_device_sink_description:?}",
+        "priority.session": 1,
         "node.dont-fallback": true,
         "node.passive": true,
         "node.linger": true,
@@ -107,6 +108,8 @@ EOF
 # slots have 0 dB gain and do nothing. The plugin writes the values to ${eq_settings_file} (read when
 # the filter is loaded) and changes them at runtime without reloading.
 eq_settings_file="${HOME:?}/.config/pipewire/vss-eq.txt"
+# Real output device chosen in the plugin (sink name). Written by the plugin.
+output_target_file="${HOME:?}/.config/pipewire/vss-output.txt"
 eq_slots=(ls1 ls2 pk1 pk2 pk3 pk4 pk5 pk6 pk7 pk8 pk9 pk10 hs1 hs2)
 
 eq_slot_label() {
@@ -182,6 +185,7 @@ build_eq_module_args() {
         "media.class": "Audio/Sink",
         "audio.channels": 2,
         "audio.position": [ FL FR ],
+        "priority.session": 1,
         "node.dont-fallback": true
     },
     playback.props = {
@@ -276,6 +280,7 @@ filter_module_convolver_args_8=$(
         "media.class": "Audio/Sink",
         "audio.channels": 8,
         "audio.position": [ FL FR FC LFE RL RR SL SR ],
+        "priority.session": 1,
         "node.dont-fallback": true,
         "node.linger": true,
         "node.autoconnect": false,
@@ -430,6 +435,7 @@ filter_module_sofa_args_8=$(
         "media.class": "Audio/Sink",
         "audio.channels": 8,
         "audio.position": [ FL FR FC LFE RL RR SL SR ],
+        "priority.session": 1,
         "node.dont-fallback": true,
         "node.linger": true,
         "node.autoconnect": false,
@@ -740,6 +746,13 @@ link_virtual_surround_chain() {
         #default_sink_name=$(wpctl status | awk '/\*/ && /Audio\/Sink/ { sub(/.*\*\s*[0-9]+\.\s*/, ""); sub(/\s*\[.*/, ""); print; exit }' | sed 's/[[:space:]]*$//')
     fi
 
+    # The output device chosen in the plugin wins (if it is connected).
+    local chosen_output=""
+    chosen_output=$(head -n 1 "${output_target_file}" 2>/dev/null | sed 's/[[:space:]]*$//' || true)
+    if [[ -n "${chosen_output}" ]] && pactl list short sinks 2>/dev/null | cut -f2 | grep -Fxq -- "${chosen_output}"; then
+        default_sink_name="${chosen_output}"
+    fi
+
     if [[ -z "${default_sink_name}" || "${default_sink_name}" == "${virtual_filter}" || "${default_sink_name}" == "${virtual_device}" || "${default_sink_name}" == "${virtual_eq}" ]]; then
         echo "Unable to detect a valid target output sink"
         return 1
@@ -908,6 +921,8 @@ run() {
     # "Virtual Surround Sound" device sink that the apps are connected to stays in place, so
     # apps are not moved to another output and keep playing once the new filter is linked.
     trap 'filter_reload_requested="true"' USR1
+    # SIGUSR2: the plugin changed the output device; re-link right away.
+    trap 'relink_requested="true"' USR2
     echo "Running service"
     local filter_type="convolver"
     while [[ $# -gt 0 ]]; do
@@ -965,6 +980,10 @@ run() {
         fi
         if ! is_pid_running "${virtual_surround_filter_sink_pw_cli_pid}" || ! is_pid_running "${virtual_surround_device_sink_pw_cli_pid}" || ! is_pid_running "${virtual_surround_eq_sink_pw_cli_pid}"; then
             break
+        fi
+        if [[ "${relink_requested:-false}" == "true" ]]; then
+            relink_requested="false"
+            event="true"
         fi
         if [[ "${filter_reload_requested}" == "true" ]]; then
             filter_reload_requested="false"
@@ -1029,6 +1048,14 @@ wait_for_filter_linked() {
         sleep 0.25
     done
     return 1
+}
+
+relink() {
+    local main_pid=""
+    main_pid=$(systemctl --user show -p MainPID --value "${service_name:?}" 2>/dev/null || true)
+    if [[ -n "${main_pid}" && "${main_pid}" != "0" ]]; then
+        kill -USR2 "${main_pid}" 2>/dev/null || true
+    fi
 }
 
 reload_filter() {
@@ -1237,7 +1264,7 @@ stop_service() {
 }
 
 print_usage_and_exit() {
-    echo "Usage: $0 {run|install|uninstall|restart|reload-filter|stop|kill-all|print-vss-info|speaker-test} [--filter=<convolver|sofa>] [--sink=<name>] [--channel=<FL|FR|FC|LFE|RL|RR|SL|SR>] [additional args...]"
+    echo "Usage: $0 {run|install|uninstall|restart|relink|reload-filter|stop|kill-all|print-vss-info|speaker-test} [--filter=<convolver|sofa>] [--sink=<name>] [--channel=<FL|FR|FC|LFE|RL|RR|SL|SR>] [additional args...]"
     exit "$1"
 }
 
@@ -1279,6 +1306,9 @@ case "$cmd" in
     ;;
 "restart")
     restart_service "$@"
+    ;;
+"relink")
+    relink
     ;;
 "reload-filter")
     reload_filter "$@"
