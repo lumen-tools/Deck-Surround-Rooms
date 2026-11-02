@@ -3,6 +3,7 @@ import { ButtonItem, Dropdown, Field, PanelSection, PanelSectionRow, showModal, 
 import { call, openFilePicker, toaster } from '@decky/api'
 import { EqState } from '../interfaces'
 import HeadphoneSearchModal from './HeadphoneSearchModal'
+import EqCurve from './EqCurve'
 
 const ADD_OPTION = '__add_headphones__'
 const IMPORT_OPTION = '__import_file__'
@@ -98,6 +99,11 @@ const HeadphoneEq: React.FC = () => {
               />
             </Field>
           </PanelSectionRow>
+          {state.curve && (
+            <PanelSectionRow>
+              <EqCurve curve={state.curve} enabled={state.enabled} />
+            </PanelSectionRow>
+          )}
         </>
       ) : (
         <>

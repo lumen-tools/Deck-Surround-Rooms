@@ -91,7 +91,9 @@ const HeadphoneSearchModal: React.FC<HeadphoneSearchModalProps> = ({ closeModal,
           >
             <span>
               <div>{result.name}</div>
-              <div style={{ fontSize: '12px', opacity: 0.6 }}>{result.form} · {result.source}</div>
+              <div style={{ fontSize: '12px', opacity: 0.6 }}>
+                {result.recommended ? '★ Recommended · ' : ''}{result.form} · {result.source}
+              </div>
             </span>
             {adding === result.id && <Spinner style={{ width: '18px', height: '18px' }} />}
           </DialogButton>

@@ -235,6 +235,13 @@ def parse_autoeq_index(text: str) -> list[dict]:
     return entries
 
 
+def parse_autoeq_recommended(text: str) -> set[str]:
+    """Paths of AutoEq's recommended results (results/README.md): the best measurement per headphone."""
+    import urllib.parse
+    return {urllib.parse.unquote(m.group(1)) for m in
+            (re.match(r"^- \[.+?\]\(\./(.+)\)\s*$", line.strip()) for line in text.splitlines()) if m}
+
+
 def parse_autoeq_parametric(text: str) -> dict:
     """Parses an AutoEq ParametricEQ.txt (Equalizer APO format)."""
     preamp = 0.0
@@ -1271,15 +1278,20 @@ class Plugin:
             with open(autoeq_index_cache_path, "r", encoding="utf-8") as f:
                 stored = json.load(f)
         # Refresh the index once a week; fall back to the stored copy when offline.
-        if stored and time.time() - stored.get("fetched", 0) < 7 * 24 * 3600:
+        if stored and stored.get("version") == 2 and time.time() - stored.get("fetched", 0) < 7 * 24 * 3600:
             entries = stored.get("entries", [])
         else:
             data = await self._download(f"{AUTOEQ_RESULTS_URL}/INDEX.md", timeout=60)
             if data:
                 entries = parse_autoeq_index(data.decode("utf-8", errors="replace"))
+                recommended_data = await self._download(f"{AUTOEQ_RESULTS_URL}/README.md", timeout=60)
+                recommended = parse_autoeq_recommended(recommended_data.decode("utf-8", errors="replace")) \
+                    if recommended_data else set()
+                for e in entries:
+                    e["recommended"] = e["path"] in recommended
                 with contextlib.suppress(Exception):
                     with open(autoeq_index_cache_path, "w", encoding="utf-8") as f:
-                        json.dump({"fetched": time.time(), "entries": entries}, f)
+                        json.dump({"version": 2, "fetched": time.time(), "entries": entries}, f)
             elif stored:
                 entries = stored.get("entries", [])
         if entries:
@@ -1306,18 +1318,33 @@ class Plugin:
         compact = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())
         tokens = [compact(t) for t in query.split() if compact(t)]
         matches = []
+        query_compact = compact(query)
+
+        def match_rank(original: str, name: str) -> int:
+            # 0: the query starts at a word start ("hd 600" -> "Sennheiser HD 600"), 1: anywhere in the
+            # name ("Denon AH-D600"), 2: only the single words match.
+            pos, starts = 0, []
+            for word in re.findall(r"[a-z0-9]+", original.lower()):
+                starts.append(pos)
+                pos += len(word)
+            if any(name.startswith(query_compact, start) for start in starts):
+                return 0
+            return 1 if query_compact in name else 2
+
         for e in entries:
             name = compact(e["name"])
             if all(t in name for t in tokens):
                 priority = AUTOEQ_SOURCE_PRIORITY.index(e["source"]) if e["source"] in AUTOEQ_SOURCE_PRIORITY \
                     else len(AUTOEQ_SOURCE_PRIORITY)
-                matches.append((0 if compact(query) in name else 1, len(e["name"]), e["name"].lower(), priority, e))
-        matches.sort(key=lambda m: m[:4])
+                matches.append((match_rank(e["name"], name), len(e["name"]), e["name"].lower(),
+                                0 if e.get("recommended") else 1, priority, e))
+        matches.sort(key=lambda m: m[:5])
         results = [{
             "id": e["path"],
             "name": e["name"],
             "source": e["source"] + (f" ({e['rig']})" if e["rig"] else ""),
             "form": self._headphone_form(e["path"]),
+            "recommended": bool(e.get("recommended")),
         } for *_, e in matches[:40]]
         return {"ok": True, "results": results}
 
@@ -1330,10 +1357,13 @@ class Plugin:
         active = settings.getSetting("eq_active_profile", None)
         if active not in [p["id"] for p in profiles]:
             active = profiles[0]["id"] if profiles else None
+        active_profile = next((p for p in profiles if p["id"] == active), None)
         return {
             "enabled": bool(settings.getSetting("eq_enabled", False)) and active is not None,
             "active": active,
             "profiles": [{"id": p["id"], "label": f"{p['name']} · {p['source']}"} for p in profiles],
+            # For the curve display.
+            "curve": {"preamp": active_profile["preamp"], "filters": active_profile["filters"]} if active_profile else None,
         }
 
     async def add_headphone_profile(self, profile_id: str) -> dict:

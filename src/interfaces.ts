@@ -87,10 +87,23 @@ export interface EqProfileEntry {
   label: string;
 }
 
+export interface EqFilter {
+  type: 'LSC' | 'PK' | 'HSC';
+  fc: number;
+  gain: number;
+  q: number;
+}
+
+export interface EqCurveData {
+  preamp: number;
+  filters: EqFilter[];
+}
+
 export interface EqState {
   enabled: boolean;
   active: string | null;
   profiles: EqProfileEntry[];
+  curve?: EqCurveData | null;
 }
 
 export interface HeadphoneSearchResult {
@@ -98,4 +111,5 @@ export interface HeadphoneSearchResult {
   name: string;
   source: string;
   form: string;
+  recommended?: boolean;
 }
