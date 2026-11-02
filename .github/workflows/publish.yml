@@ -139,7 +139,8 @@ jobs:
       # --
       - name: Delete Latest Release
         if: steps.check_latest_tag_exists.outputs.exists == 'true'
-        run: gh release delete latest --cleanup-tag
+        # Tolerate a missing release (e.g. deleted by hand while the "latest" tag is still there).
+        run: gh release delete latest --cleanup-tag --yes || git push origin :refs/tags/latest || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
