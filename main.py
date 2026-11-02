@@ -1368,6 +1368,55 @@ class Plugin:
                           profile["name"], profile["source"], len(profile["filters"]), profile["preamp"])
         return {"ok": True, "state": await self.get_eq_state()}
 
+    async def get_eq_import_start_path(self) -> str:
+        homes = [getattr(decky, "DECKY_USER_HOME", None), os.path.expanduser("~")]
+        for home in [h for h in homes if h]:
+            if os.path.isdir(os.path.join(home, "Downloads")):
+                return os.path.join(home, "Downloads")
+        return next((h for h in homes if h and os.path.isdir(h)), "/")
+
+    async def import_headphone_profile(self, path: str) -> dict:
+        """
+        Imports an AutoEq profile from a file, for use without internet. Expected format: the
+        "<headphones> ParametricEQ.txt" files of the AutoEq repository, or an "Equalizer APO" /
+        parametric export from autoeq.app (Preamp line plus LSC/PK/HSC filter lines).
+        """
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) > 64 * 1024:
+                return {"ok": False, "error": "Not an AutoEq ParametricEQ file"}
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            if text.lstrip().startswith("GraphicEQ:"):
+                return {"ok": False, "error": "This is a GraphicEQ file. Use the ParametricEQ.txt file instead"}
+            parsed = parse_autoeq_parametric(text)
+        except ValueError:
+            return {"ok": False, "error": "Not an AutoEq ParametricEQ file"}
+        except OSError as e:
+            return {"ok": False, "error": f"Unable to read the file ({e.strerror})"}
+        name = os.path.splitext(os.path.basename(path))[0]
+        name = re.sub(r"\s*ParametricEQ$", "", name, flags=re.IGNORECASE).strip() or "Imported headphones"
+        dropped = sum(max(0, sum(1 for f in parsed["filters"] if f["type"] == kind) - len(slots))
+                      for kind, slots in EQ_SLOTS.items())
+        profile = {
+            "id": f"file:{name}",
+            "name": name,
+            "source": "imported",
+            "form": "",
+            "preamp": parsed["preamp"],
+            "filters": parsed["filters"],
+        }
+        profiles = [p for p in self._eq_profiles() if p["id"] != profile["id"]] + [profile]
+        settings.setSetting("eq_profiles", profiles)
+        settings.setSetting("eq_active_profile", profile["id"])
+        settings.setSetting("eq_enabled", True)
+        await self._apply_eq()
+        decky.logger.info("Imported headphone EQ '%s' from %s: %s filters (%s dropped), preamp %s dB",
+                          name, path, len(parsed["filters"]), dropped, parsed["preamp"])
+        result = {"ok": True, "state": await self.get_eq_state()}
+        if dropped:
+            result["warning"] = f"{dropped} weak filter(s) were left out (the EQ has 2 low shelf, 10 peak and 2 high shelf filters)"
+        return result
+
     async def remove_headphone_profile(self, profile_id: str) -> dict:
         profiles = [p for p in self._eq_profiles() if p["id"] != profile_id]
         settings.setSetting("eq_profiles", profiles)

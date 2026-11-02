@@ -45,7 +45,7 @@ Virtual Surround + Rooms is based on [Virtual Surround Sound](https://github.com
 - **Binaural Audio Processing:** Convolves 7.1 surround audio with binaural room impulse responses (BRIRs) for headphone output.
 - **Room Presets:** Eight real rooms, from broadcast studios to a lecture hall, measured with dummy heads.
 - **One Switch:** Turns virtual surround on or off for all apps and games.
-- **Headphone EQ:** Corrects your headphones to a neutral (Harman) response with a profile from the [AutoEq](https://github.com/jaakkopasanen/AutoEq) database. Search for your headphones once (internet needed), the profile is then stored offline.
+- **Headphone EQ:** Corrects your headphones to a neutral (Harman) response with a profile from the [AutoEq](https://github.com/jaakkopasanen/AutoEq) database. Search for your headphones once (internet needed), the profile is then stored offline. Without internet, import an AutoEq `ParametricEQ.txt` file instead.
 - **Channel Activity:** Shows in real time which of the 8 channels carry audio, so you can see whether a game really outputs surround.
 - **User-Friendly Interface:** Easily enable/disable the effect without complex configuration.
 
@@ -162,4 +162,6 @@ The converted files in `defaults/hrir-audio` are distributed under CC BY-NC-SA 4
 ### Headphone EQ profiles
 
 The headphone EQ uses parametric profiles from [AutoEq](https://github.com/jaakkopasanen/AutoEq) by Jaakko Pasanen (MIT licence), computed from measurements by oratory1990, crinacle, Rtings and others. No profiles are bundled with the plugin: the profile you choose is downloaded from the AutoEq repository and stored locally. Over-ear and on-ear headphones use the Harman over-ear target, in-ears the Harman in-ear target.
+
+To import a profile without internet, download the `<headphones> ParametricEQ.txt` file of your headphones from the [AutoEq results](https://github.com/jaakkopasanen/AutoEq/tree/master/results) (or export "Equalizer APO" / parametric from [autoeq.app](https://autoeq.app)), copy it to the Steam Deck (e.g. `Downloads`) and choose **Headphones → Import file…** in the plugin. GraphicEQ and FixedBandEQ files are not supported.
 
