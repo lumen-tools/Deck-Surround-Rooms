@@ -10,13 +10,13 @@ Users of this plugin are able to place a custom .wav from the HRTF Database (<ht
 
 ## Installation
 
-Virtual Surround + Rooms is not in the Decky Plugin Store. Install it from the [GitHub releases](https://github.com/lumen-tools/decky-virtual-surround-rooms/releases/latest):
+Virtual Surround + Rooms is not in the Decky Plugin Store. Install it from the [GitHub releases](https://github.com/lumen-tools/Decky-Virtual-Surround-Rooms/releases/latest):
 
 1. If the original *Virtual Surround Sound* plugin is installed, uninstall it first. Both use the same audio service and would get in each other's way.
 2. In Decky, open **Settings → General** and turn on **Developer mode**.
 3. Open **Settings → Developer** and choose **Install Plugin from URL**. Enter:
    ```
-   https://github.com/lumen-tools/decky-virtual-surround-rooms/releases/latest/download/decky-virtual-surround-rooms.zip
+   https://github.com/lumen-tools/Decky-Virtual-Surround-Rooms/releases/latest/download/decky-virtual-surround-rooms.zip
    ```
    Alternatively, download the ZIP from the latest release and use **Install Plugin from ZIP File**.
 

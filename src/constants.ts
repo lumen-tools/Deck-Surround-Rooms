@@ -3,7 +3,7 @@ import { Router } from '@decky/ui'
 import { call } from '@decky/api'
 
 // Links shown in the settings page
-export const FORK_REPO_URL = 'https://github.com/lumen-tools/Virtual-Surround-Rooms'
+export const FORK_REPO_URL = 'https://github.com/lumen-tools/Decky-Virtual-Surround-Rooms'
 export const ORIGINAL_REPO_URL = 'https://github.com/DeckSettings/decky-virtual-surround-sound'
 
 export const restartSteamClient = (): void => {
