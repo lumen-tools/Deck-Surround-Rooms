@@ -12,6 +12,9 @@ const IMPORT_OPTION = '__import_file__'
 const HeadphoneEq: React.FC = () => {
   const [state, setState] = useState<EqState | null>(null)
   const [busy, setBusy] = useState(false)
+  // Bumped after the 'Add headphones…' / 'Import file…' entries, so the dropdown shows the active
+  // headphones again instead of the action entry (also when the action is cancelled).
+  const [dropdownKey, setDropdownKey] = useState(0)
 
   useEffect(() => {
     // Polled: the EQ pauses by itself when no headphones are connected, or when another output is chosen in Steam.
@@ -82,6 +85,7 @@ const HeadphoneEq: React.FC = () => {
           <PanelSectionRow>
             <Field label="Headphones" childrenLayout="below" childrenContainerWidth="max" bottomSeparator="none">
               <Dropdown
+                key={dropdownKey}
                 rgOptions={[
                   ...state.profiles.map((profile) => ({ label: profile.label, data: profile.id })),
                   { label: 'Add headphones…', data: ADD_OPTION },
@@ -91,10 +95,12 @@ const HeadphoneEq: React.FC = () => {
                 disabled={busy}
                 onChange={(option) => {
                   if (option.data === ADD_OPTION) {
+                    setDropdownKey((k) => k + 1)
                     openSearch()
                     return
                   }
                   if (option.data === IMPORT_OPTION) {
+                    setDropdownKey((k) => k + 1)
                     importFile()
                     return
                   }
