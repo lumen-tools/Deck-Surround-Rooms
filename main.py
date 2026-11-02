@@ -161,7 +161,7 @@ hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wa
 
 # Bump this whenever the filter graph in service.sh changes so that an already running
 # systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
-SERVICE_GRAPH_VERSION = 6
+SERVICE_GRAPH_VERSION = 7
 # Bump this whenever the HRIR preparation (normalisation) changes.
 HRIR_PREPARE_VERSION = 1
 
@@ -491,6 +491,17 @@ async def get_virtual_surround_sink_names() -> tuple[str | None, str | None]:
     return _virtual_surround_sink_names
 
 
+_headphone_eq_sink_name: str | None = None
+
+
+async def get_headphone_eq_sink_name() -> str | None:
+    """Name of the stereo sink with only the headphone EQ (used when surround is off)."""
+    global _headphone_eq_sink_name
+    if _headphone_eq_sink_name is None:
+        _headphone_eq_sink_name = (await _fetch_virtual_surround_sink_info()).get("VSS EQ Capture Name") or None
+    return _headphone_eq_sink_name
+
+
 async def async_wait(evt: asyncio.Event, timeout: float) -> bool:
     with contextlib.suppress(asyncio.TimeoutError):
         await asyncio.wait_for(evt.wait(), timeout)
@@ -635,10 +646,13 @@ class Plugin:
             if not filter_name or not device_name:
                 return
             state["names"] = (filter_name, device_name)
-        filter_name, device_name = state["names"]
+        filter_name, _ = state["names"]
+        # The virtual sink the apps play to: the surround device, or the headphone EQ sink.
+        device_name = await self._active_input_sink_name()
+        virtual_names = await self._virtual_sink_names()
 
         sinks = await self.list_sinks() or []
-        vss = next((sink for sink in sinks if sink.get("name") == device_name), None)
+        vss = next((sink for sink in sinks if sink.get("name") == device_name), None) if device_name else None
         if vss is None:
             state.pop("vss_index", None)
             # Object ids get reused by PipeWire; never touch a stale one.
@@ -648,12 +662,12 @@ class Plugin:
         # virtual surround sinks is the default (same rule the service uses for linking).
         output = None
         default_name = await self.get_default_sink_name()
-        if default_name and default_name not in (filter_name, device_name):
+        if default_name and default_name not in virtual_names:
             output = next((sink for sink in sinks if sink.get("name") == default_name), None)
         if output is None:
             output_id = await self.get_highest_priority_sink_id()
             output = next((sink for sink in sinks if self._object_id_from_sink(sink) == output_id), None)
-        if output is None or output.get("name") in (filter_name, device_name):
+        if output is None or output.get("name") in virtual_names:
             return
 
         vss_index = self._sink_index_from_entry(vss)
@@ -703,7 +717,9 @@ class Plugin:
             self._neutralized_vss_state = current
 
     async def neutralize_vss_volume_now(self):
-        _, device_name = self._volume_sync_state.get("names") or await get_virtual_surround_sink_names()
+        device_name = await self._active_input_sink_name()
+        if not device_name:
+            return
         vss = next((sink for sink in await self.list_sinks() or [] if sink.get("name") == device_name), None)
         if vss is not None:
             await self._neutralize_vss_volume(vss)
@@ -719,7 +735,7 @@ class Plugin:
             fast = time.monotonic() < self._vss_guard_fast_until
             try:
                 object_id = self._vss_object_id
-                if object_id is not None and await self.get_surround_enabled():
+                if object_id is not None and await self._routing_mode() != "off":
                     await self._set_soft_volumes(object_id, self._vss_channels or 8)
             except asyncio.CancelledError:
                 raise
@@ -804,7 +820,7 @@ class Plugin:
                 # on the right output yet, re-check every second so it is fixed right away.
                 interval = 10
                 with contextlib.suppress(Exception):
-                    if await self._routing_is_applied(await self.get_surround_enabled()):
+                    if await self._routing_is_applied():
                         fast_retries = 0
                     elif fast_retries < 20:
                         # Limited, so an app that can't be moved doesn't cause a check every second forever.
@@ -889,37 +905,68 @@ class Plugin:
     async def get_surround_enabled(self) -> bool:
         return bool(settings.getSetting("surround_enabled", settings.getSetting("surround_sink_default", True)))
 
-    async def set_surround_enabled(self, enabled: bool) -> bool:
-        """Switches surround on/off and only returns once all apps are actually on the new output."""
-        decky.logger.info("Virtual surround %s", "enabled" if enabled else "disabled")
-        settings.setSetting("surround_enabled", bool(enabled))
-        # Right after installing/updating the plugin the surround service is still starting. Wait for
-        # it instead of giving up, otherwise the switch is "on" but nothing is routed yet.
+    async def _routing_mode(self) -> str:
+        """
+        Where the apps play to:
+          "surround" -> "Virtual Surround Sound" device (room simulation + headphone EQ)
+          "eq"       -> "Headphone EQ" sink (headphone EQ only, surround switched off)
+          "off"      -> the real output device
+        """
+        if await self.get_surround_enabled():
+            return "surround"
+        if self._active_eq_profile() is not None:
+            return "eq"
+        return "off"
+
+    async def _active_input_sink_name(self) -> str | None:
+        """The virtual sink the apps play to in the current mode (None when they play to the device)."""
+        mode = await self._routing_mode()
+        if mode == "surround":
+            return (await get_virtual_surround_sink_names())[1]
+        if mode == "eq":
+            return await get_headphone_eq_sink_name()
+        return None
+
+    async def _virtual_sink_names(self) -> set[str]:
+        filter_name, device_name = await get_virtual_surround_sink_names()
+        return {n for n in (filter_name, device_name, await get_headphone_eq_sink_name()) if n}
+
+    async def _apply_routing(self) -> bool:
+        """Moves the apps for the current mode and only returns once they are actually there."""
         if not await self._wait_for_surround_sinks(timeout=20.0):
-            decky.logger.warning("Surround switch: virtual surround sinks are not available")
+            decky.logger.warning("Routing: virtual sinks are not available")
             return False
         self._vss_guard_fast_until = time.monotonic() + 5.0
         for attempt in range(10):
             await self.check_state()
-            if await self._routing_is_applied(bool(enabled)):
-                if enabled:
+            if await self._routing_is_applied():
+                if await self._routing_mode() != "off":
                     # Steam re-applies the volume of the new default output shortly after the switch, which
-                    # turns the VSS attenuation back on (silence at low volumes). Neutralise it a few times
-                    # before reporting the switch as done.
+                    # turns the attenuation of the virtual sink back on (silence at low volumes). Neutralise
+                    # it a few times before reporting the switch as done.
                     for _ in range(3):
                         await self.neutralize_vss_volume_now()
                         await asyncio.sleep(0.4)
                 return True
             await asyncio.sleep(0.3)
-        decky.logger.warning("Surround switch: not all apps could be moved")
+        decky.logger.warning("Routing: not all apps could be moved")
         return False
+
+    async def set_surround_enabled(self, enabled: bool) -> bool:
+        """Switches surround on/off and only returns once all apps are actually on the new output."""
+        decky.logger.info("Virtual surround %s", "enabled" if enabled else "disabled")
+        settings.setSetting("surround_enabled", bool(enabled))
+        # Right after installing/updating the plugin the surround service is still starting; the routing
+        # waits for it instead of giving up, otherwise the switch is "on" but nothing is routed yet.
+        return await self._apply_routing()
 
     async def _surround_sinks_ready(self) -> bool:
         filter_name, device_name = await get_virtual_surround_sink_names()
-        if not filter_name or not device_name:
+        eq_name = await get_headphone_eq_sink_name()
+        if not filter_name or not device_name or not eq_name:
             return False
         names = {sink.get("name") for sink in await self.list_sinks() or []}
-        return filter_name in names and device_name in names
+        return filter_name in names and device_name in names and eq_name in names
 
     async def _wait_for_surround_sinks(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -930,22 +977,35 @@ class Plugin:
                 return False
             await asyncio.sleep(0.5)
 
-    async def _routing_is_applied(self, enabled: bool) -> bool:
+    async def _target_indices(self, sinks: list[dict], mode: str) -> tuple[set[int], set[int]]:
+        """(indices of the sinks apps should be on in this mode, indices of all virtual sinks)."""
+        filter_name, device_name = await get_virtual_surround_sink_names()
+        eq_name = await get_headphone_eq_sink_name()
+        index = {sink.get("name"): self._sink_index_from_entry(sink) for sink in sinks}
+        virtual = {index.get(n) for n in (filter_name, device_name, eq_name) if index.get(n) is not None}
+        if mode == "surround":
+            target = {index.get(n) for n in (filter_name, device_name) if index.get(n) is not None}
+        elif mode == "eq":
+            target = {index[eq_name]} if index.get(eq_name) is not None else set()
+        else:
+            target = set()
+        return target, virtual
+
+    async def _routing_is_applied(self, enabled: bool | None = None) -> bool:
+        mode = await self._routing_mode()
         filter_name, device_name = await get_virtual_surround_sink_names()
         sinks = await self.list_sinks() or []
         managed_targets = await self._managed_targets(sinks, filter_name, device_name)
-        surround_indices = {
-            self._sink_index_from_entry(sink) for sink in sinks
-            if sink.get("name") in (filter_name, device_name)
-        }
-        if enabled and len(surround_indices) < 2:
+        target, virtual = await self._target_indices(sinks, mode)
+        if mode != "off" and not target:
             return False
         for sink_input in await self.list_sink_inputs() or []:
             if self._is_internal_stream(sink_input) or self._is_pinned_elsewhere(sink_input, managed_targets):
                 continue
-            on_surround = self._parse_int(sink_input.get("sink"), -1) in surround_indices
-            if on_surround != enabled:
-                return False
+            current = self._parse_int(sink_input.get("sink"), -1)
+            if (current in target) if mode != "off" else (current not in virtual):
+                continue
+            return False
         return True
 
     # Kept for the CLI
@@ -964,7 +1024,7 @@ class Plugin:
         if str(props.get("node.autoconnect", "")).lower() == "false":
             return True
         node_name = str(props.get("node.name", ""))
-        if node_name.startswith("output.vss-filter") or node_name.startswith("output.virtual-surround-sound"):
+        if node_name.startswith(("output.vss-filter", "output.virtual-surround-sound", "output.vss-headphone-eq")):
             return True
         return props.get("application.process.binary") in self.INTERNAL_STREAM_BINARIES
 
@@ -985,8 +1045,9 @@ class Plugin:
         device (e.g. HDMI chosen in the game) are left alone.
         """
         managed: set[str] = set()
+        eq_name = await get_headphone_eq_sink_name()
         for sink in sinks:
-            if sink.get("name") in (filter_name, device_name):
+            if sink.get("name") in (filter_name, device_name, eq_name):
                 managed |= self._sink_identifiers(sink)
         output_id = await self.get_highest_priority_sink_id()
         managed |= self._sink_identifiers(
@@ -1066,23 +1127,23 @@ class Plugin:
         if default_sink_id is None or default_sink_index is None:
             decky.logger.warning("Unable to determine fallback default sink; leaving default unchanged.")
 
-        surround_enabled = await self.get_surround_enabled()
-        if surround_enabled:
-            if virtual_surround_device_object_id is not None:
-                await self.set_default_sink(virtual_surround_device_object_id)
-            else:
-                decky.logger.warning("Virtual Surround Device sink id not resolved; cannot update default sink.")
+        mode = await self._routing_mode()
+        eq_name = await get_headphone_eq_sink_name()
+        eq_sink = next((sink for sink in sinks if sink.get("name") == eq_name), None)
+        if mode == "surround":
+            target_object_id, target_index, target_label = (
+                virtual_surround_device_object_id, virtual_surround_target_index, "Virtual Surround Sound")
+        elif mode == "eq":
+            target_object_id, target_index, target_label = (
+                self._object_id_from_sink(eq_sink), self._sink_index_from_entry(eq_sink), "Headphone EQ")
         else:
-            if default_sink_id is not None:
-                await self.set_default_sink(default_sink_id)
-            else:
-                decky.logger.warning("Default sink id not resolved; cannot update default sink.")
+            target_object_id, target_index, target_label = default_sink_id, default_sink_index, "the output device"
+        if target_object_id is not None:
+            await self.set_default_sink(target_object_id)
+        else:
+            decky.logger.warning("Sink for mode '%s' not resolved; cannot update default sink.", mode)
 
-        surround_sink_indices: set[int] = set()
-        if virtual_surround_index is not None:
-            surround_sink_indices.add(virtual_surround_index)
-        if virtual_surround_device_index is not None:
-            surround_sink_indices.add(virtual_surround_device_index)
+        target_indices, virtual_indices = await self._target_indices(sinks, mode)
         managed_targets = await self._managed_targets(sinks, filter_name, device_name)
         for sink_input in sink_inputs:
             if self._is_internal_stream(sink_input):
@@ -1092,18 +1153,14 @@ class Plugin:
                 continue
             app_name = self._sink_input_app_name(sink_input) or f"sink input {sink_input.get('index')}"
             current_sink_index = self._parse_int(sink_input.get('sink'), -1)
-            if surround_enabled:
-                if virtual_surround_target_index is None or current_sink_index in surround_sink_indices:
+            if mode == "off":
+                if current_sink_index not in virtual_indices or target_index is None:
                     continue
-                decky.logger.info("Moving %s (sink input %s) to Virtual Surround Sound (sink %s)",
-                                  app_name, sink_input['index'], virtual_surround_target_index)
-                await self.set_sink_for_application(sink_input['index'], virtual_surround_target_index)
-            else:
-                if current_sink_index not in surround_sink_indices or default_sink_index is None:
-                    continue
-                decky.logger.info("Moving %s (sink input %s) to the output device (sink %s)",
-                                  app_name, sink_input['index'], default_sink_index)
-                await self.set_sink_for_application(sink_input['index'], default_sink_index)
+            elif target_index is None or current_sink_index in target_indices:
+                continue
+            decky.logger.info("Moving %s (sink input %s) to %s (sink %s)",
+                              app_name, sink_input['index'], target_label, target_index)
+            await self.set_sink_for_application(sink_input['index'], target_index)
 
     async def get_hrir_file_list(self) -> list[dict[str, str | None | int]] | None:
         """Lists available HRIR files with channel count."""
@@ -1368,6 +1425,7 @@ class Plugin:
 
     async def add_headphone_profile(self, profile_id: str) -> dict:
         """Downloads an AutoEq profile, stores it offline, selects it and turns the EQ on."""
+        mode_before = await self._routing_mode()
         entry = next((e for e in await self._autoeq_index() if e["path"] == profile_id), None)
         if entry is None:
             return {"ok": False, "error": "Headphones not found"}
@@ -1393,7 +1451,7 @@ class Plugin:
         settings.setSetting("eq_profiles", profiles)
         settings.setSetting("eq_active_profile", profile["id"])
         settings.setSetting("eq_enabled", True)
-        await self._apply_eq()
+        await self._eq_changed(mode_before)
         decky.logger.info("Added headphone EQ '%s' (%s): %s filters, preamp %s dB",
                           profile["name"], profile["source"], len(profile["filters"]), profile["preamp"])
         return {"ok": True, "state": await self.get_eq_state()}
@@ -1411,6 +1469,7 @@ class Plugin:
         "<headphones> ParametricEQ.txt" files of the AutoEq repository, or an "Equalizer APO" /
         parametric export from autoeq.app (Preamp line plus LSC/PK/HSC filter lines).
         """
+        mode_before = await self._routing_mode()
         try:
             if not os.path.isfile(path) or os.path.getsize(path) > 64 * 1024:
                 return {"ok": False, "error": "Not an AutoEq ParametricEQ file"}
@@ -1439,7 +1498,7 @@ class Plugin:
         settings.setSetting("eq_profiles", profiles)
         settings.setSetting("eq_active_profile", profile["id"])
         settings.setSetting("eq_enabled", True)
-        await self._apply_eq()
+        await self._eq_changed(mode_before)
         decky.logger.info("Imported headphone EQ '%s' from %s: %s filters (%s dropped), preamp %s dB",
                           name, path, len(parsed["filters"]), dropped, parsed["preamp"])
         result = {"ok": True, "state": await self.get_eq_state()}
@@ -1448,23 +1507,31 @@ class Plugin:
         return result
 
     async def remove_headphone_profile(self, profile_id: str) -> dict:
+        mode_before = await self._routing_mode()
         profiles = [p for p in self._eq_profiles() if p["id"] != profile_id]
         settings.setSetting("eq_profiles", profiles)
         if settings.getSetting("eq_active_profile", None) == profile_id:
             settings.setSetting("eq_active_profile", profiles[0]["id"] if profiles else None)
-        await self._apply_eq()
+        await self._eq_changed(mode_before)
         return await self.get_eq_state()
 
     async def set_eq_enabled(self, enabled: bool) -> dict:
+        mode_before = await self._routing_mode()
         settings.setSetting("eq_enabled", bool(enabled))
-        await self._apply_eq()
+        await self._eq_changed(mode_before)
         return await self.get_eq_state()
 
     async def set_eq_profile(self, profile_id: str) -> dict:
+        mode_before = await self._routing_mode()
         if profile_id in [p["id"] for p in self._eq_profiles()]:
             settings.setSetting("eq_active_profile", profile_id)
-            await self._apply_eq()
+            await self._eq_changed(mode_before)
         return await self.get_eq_state()
+
+    async def _eq_changed(self, mode_before: str):
+        await self._apply_eq()
+        if await self._routing_mode() != mode_before:
+            await self._apply_routing()
 
     def _active_eq_profile(self) -> dict | None:
         if not settings.getSetting("eq_enabled", False):
@@ -1484,10 +1551,13 @@ class Plugin:
         """Writes the EQ values for the next filter load and applies them to the running filter."""
         preamp, values = self._write_eq_file()
         filter_name, _ = await get_virtual_surround_sink_names()
-        sink = next((s for s in await self.list_sinks() or [] if s.get("name") == filter_name), None)
-        object_id = self._object_id_from_sink(sink) if sink else None
-        if object_id is None:
-            return False  # Filter not running; the file is read when it is loaded.
+        eq_name = await get_headphone_eq_sink_name()
+        # Both the surround filter and the headphone EQ sink have the EQ chain.
+        object_ids = [self._object_id_from_sink(s) for s in await self.list_sinks() or []
+                      if s.get("name") in (filter_name, eq_name)]
+        object_ids = [o for o in object_ids if o is not None]
+        if not object_ids:
+            return False  # Not running; the file is read when the filters are loaded.
         pairs = []
         for side in ("L", "R"):
             pairs.append((f'"eq{side}_pre:Gain 1"', f"{preamp:.6f}"))
@@ -1497,7 +1567,7 @@ class Plugin:
         # pw-cli silently drops a set-param with more than ~20 values (fixed size buffer), so send small batches.
         batch_size = 15
         ok = True
-        for start in range(0, len(pairs), batch_size):
+        for object_id, start in [(o, st) for o in object_ids for st in range(0, len(pairs), batch_size)]:
             params = " ".join(f"{k} {v}" for k, v in pairs[start:start + batch_size])
             try:
                 process = await asyncio.create_subprocess_exec(

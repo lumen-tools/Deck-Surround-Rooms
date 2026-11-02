@@ -9,6 +9,7 @@ real_script_directory="$(cd "$(dirname "${script_path}")" && pwd)"
 # Catch term signal
 _term() {
     stop_audio_event_subscription
+    cleanup_headphone_eq_module
     cleanup_virtual_surround_module
     cleanup_virtual_surround_default_sink
 }
@@ -46,6 +47,12 @@ virtual_surround_device_sink_node_name="virtual-surround-sound"
 virtual_surround_device_sink_description="Virtual Surround + Rooms"
 virtual_surround_device_sink_capture_node_name="Virtual Surround Sound"
 virtual_surround_device_sink_playback_node_name="output.virtual-surround-sound"
+# Stereo sink with only the headphone EQ (no room simulation), used when surround is off but the
+# headphone EQ is on.
+virtual_surround_eq_sink_node_name="vss-headphone-eq"
+virtual_surround_eq_sink_description="Headphone EQ"
+virtual_surround_eq_sink_capture_node_name="input.vss-headphone-eq"
+virtual_surround_eq_sink_playback_node_name="output.vss-headphone-eq"
 
 # 7.1
 device_module_args_8=$(
@@ -146,6 +153,48 @@ eq_graph_links() {
             prev="eq${side}_${slot}"
         done
     done
+}
+
+# EQ-only filter chain: 2 channels in, the same EQ chain as behind the binaural mix, 2 channels out.
+build_eq_module_args() {
+    local nodes links
+    nodes=$(eq_graph_nodes)
+    links=$(eq_graph_links | grep -v '"output": "mix[LR]:Out"')
+    eq_module_args=$(
+        cat <<EOF
+{
+    "node.name": "${virtual_surround_eq_sink_node_name:?}",
+    "node.description": "${virtual_surround_eq_sink_description:?}",
+    filter.graph = {
+        "nodes": [
+            ${nodes#*,}
+        ],
+        "links": [
+            ${links#*,}
+        ],
+        "inputs":  [ "eqL_pre:In 1", "eqR_pre:In 1" ],
+        "outputs": [ "eqL_hs2:Out", "eqR_hs2:Out" ]
+    },
+    capture.props = {
+        "node.name": "${virtual_surround_eq_sink_capture_node_name:?}",
+        "node.description": "${virtual_surround_eq_sink_description:?}",
+        "node.nick": "${virtual_surround_eq_sink_description:?}",
+        "media.class": "Audio/Sink",
+        "audio.channels": 2,
+        "audio.position": [ FL FR ],
+        "node.dont-fallback": true
+    },
+    playback.props = {
+        "node.name": "${virtual_surround_eq_sink_playback_node_name:?}",
+        "node.passive": true,
+        "node.autoconnect": false,
+        "audio.channels": 2,
+        "audio.position": [ FL FR ],
+        "stream.dont-remix": true
+    }
+}
+EOF
+    )
 }
 
 build_filter_module_convolver_args_8() {
@@ -416,6 +465,7 @@ if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
 fi
 filter_module_pid_file="${XDG_RUNTIME_DIR:?}/${virtual_surround_filter_sink_node_name:?}.pid"
 device_module_pid_file="${XDG_RUNTIME_DIR:?}/${virtual_surround_device_sink_node_name:?}.pid"
+eq_module_pid_file="${XDG_RUNTIME_DIR:?}/${virtual_surround_eq_sink_node_name:?}.pid"
 service_name="virtual-surround-sound.service"
 service_file="${HOME:?}/.config/systemd/user/${service_name:?}"
 run_script="${HOME:?}/.config/pipewire/run.sh"
@@ -466,6 +516,36 @@ EOF
 
 virtual_surround_filter_sink_pw_cli_pid=""
 virtual_surround_device_sink_pw_cli_pid=""
+
+cleanup_headphone_eq_module() {
+    local running_pid="${virtual_surround_eq_sink_pw_cli_pid:-}"
+    if [[ -z "${running_pid}" && -f "${eq_module_pid_file:?}" ]]; then
+        running_pid=$(cat "${eq_module_pid_file:?}" 2>/dev/null || true)
+    fi
+    if [[ -n "${running_pid}" ]]; then
+        kill -TERM "${running_pid}" >/dev/null 2>&1 || true
+        sleep 0.2
+    fi
+    rm -f "${eq_module_pid_file:?}" >/dev/null 2>&1 || true
+    virtual_surround_eq_sink_pw_cli_pid=""
+}
+
+create_headphone_eq_module() {
+    cleanup_headphone_eq_module
+    build_eq_module_args
+    echo "Creating and loading module libpipewire-module-filter-chain (headphone EQ) - ${virtual_surround_eq_sink_capture_node_name:?}"
+    pw-cli -m load-module libpipewire-module-filter-chain "${eq_module_args:?}" &
+    virtual_surround_eq_sink_pw_cli_pid=$!
+    echo "${virtual_surround_eq_sink_pw_cli_pid:?}" >"${eq_module_pid_file:?}"
+    sleep 1
+    if ! wait_for_sink_registration "${virtual_surround_eq_sink_capture_node_name:?}" 40 0.25; then
+        echo "ERROR! Unable to detect sink '${virtual_surround_eq_sink_capture_node_name:?}' after loading module."
+        cleanup_headphone_eq_module
+        return 1
+    fi
+    echo "Created filter-chain sink '${virtual_surround_eq_sink_capture_node_name:?}' (pid ${virtual_surround_eq_sink_pw_cli_pid:?})"
+    return 0
+}
 
 reset_default_sink() {
     local default_id=""
@@ -631,7 +711,9 @@ link_virtual_surround_chain() {
     local virtual_filter="${virtual_surround_filter_sink_capture_node_name:?}"
     local virtual_device="${virtual_surround_device_sink_capture_node_name:?}"
 
-    if [[ -n "${default_sink_name}" && ("${default_sink_name}" == "${virtual_filter}" || "${default_sink_name}" == "${virtual_device}") ]]; then
+    local virtual_eq="${virtual_surround_eq_sink_capture_node_name:?}"
+
+    if [[ -n "${default_sink_name}" && ("${default_sink_name}" == "${virtual_filter}" || "${default_sink_name}" == "${virtual_device}" || "${default_sink_name}" == "${virtual_eq}") ]]; then
         if ! command -v python3 >/dev/null 2>&1; then
             echo "Unable to find python to determine the highest priority sink."
             return 1
@@ -658,7 +740,7 @@ link_virtual_surround_chain() {
         #default_sink_name=$(wpctl status | awk '/\*/ && /Audio\/Sink/ { sub(/.*\*\s*[0-9]+\.\s*/, ""); sub(/\s*\[.*/, ""); print; exit }' | sed 's/[[:space:]]*$//')
     fi
 
-    if [[ -z "${default_sink_name}" || "${default_sink_name}" == "${virtual_filter}" || "${default_sink_name}" == "${virtual_device}" ]]; then
+    if [[ -z "${default_sink_name}" || "${default_sink_name}" == "${virtual_filter}" || "${default_sink_name}" == "${virtual_device}" || "${default_sink_name}" == "${virtual_eq}" ]]; then
         echo "Unable to detect a valid target output sink"
         return 1
     fi
@@ -705,6 +787,20 @@ link_virtual_surround_chain() {
             return 1
         fi
     done
+
+    # The headphone EQ sink plays to the same output device.
+    local eq_output_prefix="${virtual_surround_eq_sink_playback_node_name:?}:output_"
+    for ch in "${target_channels[@]}"; do
+        local eq_output_port="${eq_output_prefix}${ch}"
+        local eq_target_port="${target_input_prefix}${ch}"
+        if ! grep -Fxq -- "${eq_output_port}" <<<"${output_ports}" || ! grep -Fxq -- "${eq_target_port}" <<<"${input_ports}"; then
+            continue
+        fi
+        if ! link_ports "${eq_output_port}" "${eq_target_port}"; then
+            echo "Failed"
+            return 1
+        fi
+    done
     return 0
 }
 
@@ -733,6 +829,10 @@ virtual_surround_sinks_exist() {
     fi
 
     if ! grep -Fxq -- "${virtual_surround_device_sink_capture_node_name:?}" <<<"${sink_list}"; then
+        return 1
+    fi
+
+    if ! grep -Fxq -- "${virtual_surround_eq_sink_capture_node_name:?}" <<<"${sink_list}"; then
         return 1
     fi
 
@@ -846,6 +946,11 @@ run() {
         exit 1
     fi
 
+    if ! create_headphone_eq_module; then
+        _term
+        exit 1
+    fi
+
     local linking_failed=0
     # Check every second for a while after start and after a filter reload (things are still
     # settling), then only on audio events or every ${audio_event_check_interval} seconds.
@@ -858,7 +963,7 @@ run() {
         if wait_for_audio_event 1; then
             event="true"
         fi
-        if ! is_pid_running "${virtual_surround_filter_sink_pw_cli_pid}" || ! is_pid_running "${virtual_surround_device_sink_pw_cli_pid}"; then
+        if ! is_pid_running "${virtual_surround_filter_sink_pw_cli_pid}" || ! is_pid_running "${virtual_surround_device_sink_pw_cli_pid}" || ! is_pid_running "${virtual_surround_eq_sink_pw_cli_pid}"; then
             break
         fi
         if [[ "${filter_reload_requested}" == "true" ]]; then
@@ -890,6 +995,7 @@ run() {
     done
 
     stop_audio_event_subscription
+    cleanup_headphone_eq_module
 
     cleanup_virtual_surround_default_sink
     cleanup_virtual_surround_module
@@ -1140,6 +1246,7 @@ print_vss_info() {
     printf 'VSS Filter Capture Name: %s\n' "${virtual_surround_filter_sink_capture_node_name:?}"
     printf 'VSS Device Node Name: %s\n' "${virtual_surround_device_sink_node_name:?}"
     printf 'VSS Device Capture Name: %s\n' "${virtual_surround_device_sink_capture_node_name:?}"
+    printf 'VSS EQ Capture Name: %s\n' "${virtual_surround_eq_sink_capture_node_name:?}"
 }
 
 # Check if the effective user ID is 0 (root)
