@@ -45,12 +45,15 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
   const [hrirFiles, setHrirFiles] = useState<HrirFile[]>([])
   const [isApplyingHrir, setIsApplyingHrir] = useState<boolean>(false)
   const [isSwitching, setIsSwitching] = useState<boolean>(false)
+  // False while only the internal speakers are available (no headphones etc. connected).
+  const [outputAvailable, setOutputAvailable] = useState<boolean>(true)
   const isSwitchingRef = useRef<boolean>(false)
 
   const refreshState = async () => {
     const currentRunningApp = Router.MainRunningApp
     setRunningApp(currentRunningApp ? { display_name: currentRunningApp.display_name } : null)
     try {
+      setOutputAvailable(!!(await call<[], boolean>('get_output_available')))
       const enabled = !!(await call<[], boolean>('get_surround_enabled'))
       // Don't let the background refresh flip the switch back while a switch is in progress.
       if (!isSwitchingRef.current) setSurroundEnabled(enabled)
@@ -239,7 +242,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
             }
             description="No sound? Change the volume briefly."
             checked={!!surroundEnabled}
-            disabled={surroundEnabled === null || isSwitching}
+            disabled={surroundEnabled === null || isSwitching || !outputAvailable}
             onChange={(enabled) => toggleSurround(enabled)}
           />
         </PanelSectionRow>

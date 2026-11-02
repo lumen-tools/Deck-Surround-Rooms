@@ -916,6 +916,12 @@ class Plugin:
         # Unknown until the first check: assume yes.
         return getattr(self, "_external_output", "?") is not None
 
+    async def get_output_available(self) -> bool:
+        """False while only the internal speakers are available: surround and EQ can't be switched on then."""
+        output = await self._output_target(await self.list_sinks() or [])
+        self._external_output = output.get("name") if output else None
+        return output is not None
+
     async def get_surround_enabled(self) -> bool:
         """What the switch shows: on only while an external output (headphones etc.) is connected."""
         return self._surround_wanted() and self._external_connected()
@@ -1528,6 +1534,7 @@ class Plugin:
         active_profile = next((p for p in profiles if p["id"] == active), None)
         return {
             "enabled": bool(settings.getSetting("eq_enabled", False)) and active is not None and self._external_connected(),
+            "available": self._external_connected(),
             "active": active,
             "profiles": [{"id": p["id"], "label": f"{p['name']} · {p['source']}"} for p in profiles],
             # For the curve display.

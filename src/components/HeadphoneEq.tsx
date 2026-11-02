@@ -78,7 +78,7 @@ const HeadphoneEq: React.FC = () => {
             <ToggleField
               label="AutoEq"
               checked={state.enabled}
-              disabled={busy}
+              disabled={busy || state.available === false}
               onChange={(enabled) => run(() => call<[boolean], EqState>('set_eq_enabled', enabled))}
             />
           </PanelSectionRow>

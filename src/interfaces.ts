@@ -104,6 +104,7 @@ export interface EqState {
   active: string | null;
   profiles: EqProfileEntry[];
   curve?: EqCurveData | null;
+  available?: boolean;
 }
 
 export interface HeadphoneSearchResult {
