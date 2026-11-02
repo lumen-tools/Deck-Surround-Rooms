@@ -43,27 +43,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # --
-      - name: Append hash to plugin version
-        # Only development builds get the commit hash. A new version (no tag yet) is built as is.
-        if: steps.check_version_tag_exists.outputs.exists == 'true'
-        run: |
-          echo "::notice::This run was triggered by a commit. Appending the commit hash to the plugin version."  
-
-          PACKAGE_FILE="package.json"
-
-          SHA=$(cut -c1-7 <<< "${{ github.event.pull_request.head.sha || github.sha }}")
-          VERSION=$(jq -r '.version' $PACKAGE_FILE)
-          NEW_VERSION="$VERSION-$SHA"
-
-          echo "::notice::Going from $VERSION to $NEW_VERSION"
-
-          tmp=$(mktemp)
-          jq --arg newversion "$NEW_VERSION" '.version = $newversion' $PACKAGE_FILE > $tmp
-          mv $tmp $PACKAGE_FILE
-
-          echo "::endgroup::"
-
-      # --
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
@@ -126,36 +105,3 @@ jobs:
           skipIfReleaseExists: true
           tag: ${{ steps.prepare.outputs.plugin_version }}
           commit: master
-
-      # --
-      - name: Check Latest Tag Already Exists
-        uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 #v1.6.0
-        id: check_latest_tag_exists
-        with:
-          tag: latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # --
-      - name: Delete Latest Release
-        if: steps.check_latest_tag_exists.outputs.exists == 'true'
-        # Tolerate a missing release (e.g. deleted by hand while the "latest" tag is still there).
-        run: gh release delete latest --cleanup-tag --yes || git push origin :refs/tags/latest || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # --
-      - name: Generate Latest Release
-        uses: ncipollo/release-action@440c8c1cb0ed28b9f43e4d1d670870f059653174 #v1.16.0
-        with:
-          name: "Development Build"
-          body: "Latest development release"
-          token: ${{ secrets.GITHUB_TOKEN }}
-          artifacts: "./out/*.zip"
-          generateReleaseNotes: true
-          allowUpdates: true
-          removeArtifacts: true
-          replacesArtifacts: true
-          tag: latest
-          commit: master
-          prerelease: true
