@@ -94,6 +94,61 @@ device_module_args_8=$(
 }
 EOF
 )
+# ---- Headphone EQ ------------------------------------------------------------------------------
+# A fixed chain of filters per ear behind the binaural mix: preamp, 2 low shelves, 10 peaks and 2 high
+# shelves. Biquads in series commute, so any AutoEq parametric profile fits into these slots; unused
+# slots have 0 dB gain and do nothing. The plugin writes the values to ${eq_settings_file} (read when
+# the filter is loaded) and changes them at runtime without reloading.
+eq_settings_file="${HOME:?}/.config/pipewire/vss-eq.txt"
+eq_slots=(ls1 ls2 pk1 pk2 pk3 pk4 pk5 pk6 pk7 pk8 pk9 pk10 hs1 hs2)
+
+eq_slot_label() {
+    case "$1" in
+    ls*) echo "bq_lowshelf" ;;
+    hs*) echo "bq_highshelf" ;;
+    *) echo "bq_peaking" ;;
+    esac
+}
+
+# Prints "freq q gain" for a slot (or the linear preamp for "pre") from the settings file.
+eq_slot_values() {
+    local slot="$1" values=""
+    if [[ -f "${eq_settings_file}" ]]; then
+        values=$(awk -v s="${slot}" '$1 == s { $1 = ""; sub(/^ /, ""); print; exit }' "${eq_settings_file}" 2>/dev/null || true)
+    fi
+    if [[ -z "${values}" ]]; then
+        if [[ "${slot}" == "pre" ]]; then values="1.0"; else values="1000 0.707 0"; fi
+    fi
+    echo "${values}"
+}
+
+eq_graph_nodes() {
+    local side slot label freq q gain pre
+    pre=$(eq_slot_values pre)
+    for side in L R; do
+        printf ',\n            { "type": "builtin", "label": "mixer", "name": "eq%s_pre", "control": { "Gain 1": %s } }' "${side}" "${pre}"
+        for slot in "${eq_slots[@]}"; do
+            label=$(eq_slot_label "${slot}")
+            read -r freq q gain <<<"$(eq_slot_values "${slot}")"
+            printf ',\n            { "type": "builtin", "label": "%s", "name": "eq%s_%s", "control": { "Freq": %s, "Q": %s, "Gain": %s } }' \
+                "${label}" "${side}" "${slot}" "${freq}" "${q}" "${gain}"
+        done
+    done
+}
+
+eq_graph_links() {
+    local side slot prev
+    for side in L R; do
+        printf ',\n            { "output": "mix%s:Out", "input": "eq%s_pre:In 1" }' "${side}" "${side}"
+        prev="eq${side}_pre"
+        for slot in "${eq_slots[@]}"; do
+            printf ',\n            { "output": "%s:Out", "input": "eq%s_%s:In" }' "${prev}" "${side}" "${slot}"
+            prev="eq${side}_${slot}"
+        done
+    done
+}
+
+build_filter_module_convolver_args_8() {
 filter_module_convolver_args_8=$(
     cat <<EOF
 {
@@ -127,7 +182,7 @@ filter_module_convolver_args_8=$(
             { "type": "builtin", "label": "convolver", "name": "convFC_R", "config": { "filename": "${HOME:?}/.config/pipewire/hrir.wav", "channel": 13 } },
             { "type": "builtin", "label": "bq_lowpass", "name": "lpLFE", "control": { "Freq": ${lfe_cutoff_hz:?}, "Q": 0.707 } },
             { "type": "builtin", "label": "mixer", "name": "mixL", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } },
-            { "type": "builtin", "label": "mixer", "name": "mixR", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } }
+            { "type": "builtin", "label": "mixer", "name": "mixR", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } }$(eq_graph_nodes)
         ],
         "links": [
             { "output": "copyFL:Out", "input": "convFL_L:In" },
@@ -160,10 +215,10 @@ filter_module_convolver_args_8=$(
             { "output": "convRR_R:Out", "input": "mixR:In 7" },
             { "output": "convRR_L:Out", "input": "mixL:In 7" },
             { "output": "lpLFE:Out", "input": "mixR:In 8" },
-            { "output": "lpLFE:Out", "input": "mixL:In 8" }
+            { "output": "lpLFE:Out", "input": "mixL:In 8" }$(eq_graph_links)
         ],
         "inputs":  [ "copyFL:In", "copyFR:In", "copyFC:In", "copyLFE:In", "copyRL:In", "copyRR:In", "copySL:In", "copySR:In" ],
-        "outputs": [ "mixL:Out", "mixR:Out" ]
+        "outputs": [ "eqL_hs2:Out", "eqR_hs2:Out" ]
     },
     capture.props = {
         "node.name": "${virtual_surround_filter_sink_capture_node_name:?}",
@@ -190,6 +245,8 @@ filter_module_convolver_args_8=$(
 }
 EOF
 )
+}
+build_filter_module_convolver_args_8
 filter_module_sofa_args_8=$(
     cat <<EOF
 {
@@ -444,6 +501,7 @@ cleanup_virtual_surround_module() {
 create_virtual_surround_module() {
     local filter_type="${1:-convolver}"
     local channel_count="8"
+    build_filter_module_convolver_args_8
     local module_args="${filter_module_convolver_args_8}"
     if [[ "${filter_type}" == "sofa" ]]; then
         module_args="${filter_module_sofa_args_8}"

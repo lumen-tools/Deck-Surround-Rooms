@@ -81,3 +81,21 @@ export interface Sink {
   description?: string;
   properties?: Record<string, string>;
 }
+
+export interface EqProfileEntry {
+  id: string;
+  label: string;
+}
+
+export interface EqState {
+  enabled: boolean;
+  active: string | null;
+  profiles: EqProfileEntry[];
+}
+
+export interface HeadphoneSearchResult {
+  id: string;
+  name: string;
+  source: string;
+  form: string;
+}

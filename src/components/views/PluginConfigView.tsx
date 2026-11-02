@@ -12,6 +12,7 @@ import { CSSProperties, useState } from 'react'
 import { MdArrowBack } from 'react-icons/md'
 import { SiGithub } from 'react-icons/si'
 import { call } from '@decky/api'
+import SavedHeadphones from '../SavedHeadphones'
 import {
   clearPluginConfig,
   defaultMixerProfile,
@@ -163,6 +164,8 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
           </PanelSectionRow>
         )}
       </PanelSection>
+
+      <SavedHeadphones />
 
       <PanelSection title="Reset">
         <PanelSectionRow>

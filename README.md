@@ -45,6 +45,7 @@ Virtual Surround + Rooms is based on [Virtual Surround Sound](https://github.com
 - **Binaural Audio Processing:** Convolves 7.1 surround audio with binaural room impulse responses (BRIRs) for headphone output.
 - **Room Presets:** Eight real rooms, from broadcast studios to a lecture hall, measured with dummy heads.
 - **One Switch:** Turns virtual surround on or off for all apps and games.
+- **Headphone EQ:** Corrects your headphones to a neutral (Harman) response with a profile from the [AutoEq](https://github.com/jaakkopasanen/AutoEq) database. Search for your headphones once (internet needed), the profile is then stored offline.
 - **Channel Activity:** Shows in real time which of the 8 channels carry audio, so you can see whether a game really outputs surround.
 - **User-Friendly Interface:** Easily enable/disable the effect without complex configuration.
 
@@ -157,3 +158,8 @@ The bundled presets are binaural room impulse responses (BRIRs) of real rooms, t
 6. H. Wierstorf and M. Geier, "Binaural room impulse responses recorded with KEMAR in a mid-size lecture hall", Zenodo, 2016. <https://doi.org/10.5281/zenodo.160749>
 
 The converted files in `defaults/hrir-audio` are distributed under CC BY-NC-SA 4.0 (see `defaults/hrir-audio/LICENSE.txt`) and must not be used commercially. The licence of the plugin code (BSD-3-Clause) does not apply to these files.
+
+### Headphone EQ profiles
+
+The headphone EQ uses parametric profiles from [AutoEq](https://github.com/jaakkopasanen/AutoEq) by Jaakko Pasanen (MIT licence), computed from measurements by oratory1990, crinacle, Rtings and others. No profiles are bundled with the plugin: the profile you choose is downloaded from the AutoEq repository and stored locally. Over-ear and on-ear headphones use the Harman over-ear target, in-ears the Harman in-ear target.
+

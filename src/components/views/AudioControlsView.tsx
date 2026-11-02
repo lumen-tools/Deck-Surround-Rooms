@@ -25,6 +25,7 @@ import {
   setPluginConfig,
 } from '../../constants'
 import ChannelMeter from '../ChannelMeter'
+import HeadphoneEq from '../HeadphoneEq'
 
 interface AudioControlsViewProps {
   onChangePage: (page: PluginPage) => void
@@ -258,6 +259,8 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
           </Field>
         </PanelSectionRow>
       </PanelSection>
+
+      <HeadphoneEq />
 
       <PanelSection title="Mixer">
         {runningApp && (

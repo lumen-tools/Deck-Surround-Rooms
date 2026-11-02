@@ -148,13 +148,20 @@ hrir_directory = os.path.join(script_directory, "hrir-audio")
 default_hrir_file = "Studio Small - WDR Control Room 1.wav"
 pipewire_config_path = os.path.join(os.path.expanduser("~"), ".config", "pipewire")
 hrir_dest_path = os.path.join(pipewire_config_path, "hrir.wav")
+eq_settings_path = os.path.join(pipewire_config_path, "vss-eq.txt")
+autoeq_index_cache_path = os.path.join(settings_dir, "autoeq-index.json")
+AUTOEQ_RESULTS_URL = "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results"
+# Preferred measurement sources when a headphone was measured by several (best first).
+AUTOEQ_SOURCE_PRIORITY = ["oratory1990", "crinacle", "Rtings", "Innerfidelity", "Headphone.com Legacy"]
+# Filter slots of the EQ chain in service.sh (per ear).
+EQ_SLOTS = {"LSC": ["ls1", "ls2"], "PK": [f"pk{i}" for i in range(1, 11)], "HSC": ["hs1", "hs2"]}
 sofa_directory = os.path.join(script_directory, "hrtf-sofa")
 sofa_dest_path = os.path.join(pipewire_config_path, "hrir.sofa")
 hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wav")
 
 # Bump this whenever the filter graph in service.sh changes so that an already running
 # systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
-SERVICE_GRAPH_VERSION = 5
+SERVICE_GRAPH_VERSION = 6
 # Bump this whenever the HRIR preparation (normalisation) changes.
 HRIR_PREPARE_VERSION = 1
 
@@ -206,6 +213,62 @@ def hrir_display_name(path: str) -> str:
     readable = re.sub(r"[_\s]+", " ", readable).strip()
     return readable or "Custom HRIR"
 
+
+
+def parse_autoeq_index(text: str) -> list[dict]:
+    """Parses AutoEq's results/INDEX.md into entries {name, path, source, rig}."""
+    import urllib.parse
+    entries = []
+    pattern = re.compile(r"^- \[(?P<name>.+?)\]\(\./(?P<path>.+)\) by (?P<rest>.+)$")
+    for line in text.splitlines():
+        m = pattern.match(line.strip())
+        if not m:
+            continue
+        rest = m.group("rest")
+        source, _, rig = rest.partition(" on ")
+        entries.append({
+            "name": m.group("name"),
+            "path": urllib.parse.unquote(m.group("path")),
+            "source": source.strip(),
+            "rig": rig.strip(),
+        })
+    return entries
+
+
+def parse_autoeq_parametric(text: str) -> dict:
+    """Parses an AutoEq ParametricEQ.txt (Equalizer APO format)."""
+    preamp = 0.0
+    filters = []
+    for line in text.splitlines():
+        line = line.strip()
+        m = re.match(r"^Preamp:\s*(-?[0-9.]+)\s*dB", line, re.IGNORECASE)
+        if m:
+            preamp = float(m.group(1))
+            continue
+        m = re.match(r"^Filter\s*\d*:\s*ON\s+(LSC|LS|PK|PEQ|HSC|HS)\s+Fc\s+([0-9.]+)\s*Hz\s+Gain\s+(-?[0-9.]+)\s*dB\s+Q\s+([0-9.]+)",
+                     line, re.IGNORECASE)
+        if m:
+            kind = m.group(1).upper()
+            kind = {"LS": "LSC", "PEQ": "PK", "HS": "HSC"}.get(kind, kind)
+            filters.append({"type": kind, "fc": float(m.group(2)), "gain": float(m.group(3)), "q": float(m.group(4))})
+    if not filters:
+        raise ValueError("No filters found in the EQ profile")
+    return {"preamp": preamp, "filters": filters}
+
+
+def eq_slot_values(profile: dict | None) -> tuple[float, dict[str, tuple[float, float, float]]]:
+    """Maps a profile onto the fixed EQ slots. Returns (linear preamp, {slot: (freq, q, gain)})."""
+    values = {slot: (1000.0, 0.707, 0.0) for slots in EQ_SLOTS.values() for slot in slots}
+    if not profile:
+        return 1.0, values
+    free = {kind: list(slots) for kind, slots in EQ_SLOTS.items()}
+    # Strongest filters first, so if a profile ever has more filters than slots only the weakest are dropped.
+    for f in sorted(profile.get("filters", []), key=lambda f: -abs(f["gain"])):
+        slots = free.get(f["type"])
+        if not slots:
+            continue
+        values[slots.pop(0)] = (f["fc"], max(f["q"], 0.05), f["gain"])
+    return 10 ** (profile.get("preamp", 0.0) / 20), values
 
 class UnsupportedHrirError(Exception):
     pass
@@ -768,6 +831,8 @@ class Plugin:
             source_path = self._find_hrir_source_for_installed_file()
             decky.logger.info("Migrating installed HRIR file (source: %s)", source_path)
             self._install_hrir(source_path)
+        with contextlib.suppress(Exception):
+            self._write_eq_file()
         restart = settings.getSetting("service_graph_version", 0) != SERVICE_GRAPH_VERSION
         decky.logger.info("Installing service (restart=%s)", restart)
         await service_script_exec("install", ["--restart-after-install"] if restart else [])
@@ -1094,6 +1159,11 @@ class Plugin:
         ok = True
         await self._stop_running_sound_test()
         settings.setSetting("surround_enabled", True)
+        settings.setSetting("eq_enabled", False)
+        settings.setSetting("eq_profiles", [])
+        settings.setSetting("eq_active_profile", None)
+        with contextlib.suppress(Exception):
+            self._write_eq_file()
         try:
             if os.path.exists(hrir_original_backup_path):
                 os.remove(hrir_original_backup_path)
@@ -1169,6 +1239,199 @@ class Plugin:
     async def stop_sound_test(self) -> bool:
         await self._stop_running_sound_test()
         return True
+
+    # ---- Headphone EQ (AutoEq) ------------------------------------------------------------------
+    #
+    # Profiles come from the AutoEq database (github.com/jaakkopasanen/AutoEq, Harman target). Nothing
+    # is bundled: the user searches the index, the chosen profile is downloaded once and kept offline in
+    # the plugin settings. The EQ runs in the filter chain behind the binaural mix (see service.sh);
+    # switching profiles or turning it on/off only changes filter values, without reloading.
+
+    async def _download(self, url: str, timeout: int = 30) -> bytes | None:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "curl", "-fsSL", "--max-time", str(timeout), url,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=subprocess_exec_env())
+            out, err = await process.communicate()
+            if process.returncode != 0:
+                decky.logger.warning("Download failed (%s): %s", url, err.decode(errors="replace").strip())
+                return None
+            return out
+        except Exception as e:
+            decky.logger.error("Download error (%s): %s", url, e)
+            return None
+
+    async def _autoeq_index(self) -> list[dict]:
+        cached = getattr(self, "_autoeq_index_cache", None)
+        if cached is not None:
+            return cached
+        entries: list[dict] = []
+        stored = None
+        with contextlib.suppress(Exception):
+            with open(autoeq_index_cache_path, "r", encoding="utf-8") as f:
+                stored = json.load(f)
+        # Refresh the index once a week; fall back to the stored copy when offline.
+        if stored and time.time() - stored.get("fetched", 0) < 7 * 24 * 3600:
+            entries = stored.get("entries", [])
+        else:
+            data = await self._download(f"{AUTOEQ_RESULTS_URL}/INDEX.md", timeout=60)
+            if data:
+                entries = parse_autoeq_index(data.decode("utf-8", errors="replace"))
+                with contextlib.suppress(Exception):
+                    with open(autoeq_index_cache_path, "w", encoding="utf-8") as f:
+                        json.dump({"fetched": time.time(), "entries": entries}, f)
+            elif stored:
+                entries = stored.get("entries", [])
+        if entries:
+            self._autoeq_index_cache = entries
+        return entries
+
+    @staticmethod
+    def _headphone_form(path: str) -> str:
+        lower = path.lower()
+        if "in-ear" in lower:
+            return "In-ear"
+        if "earbud" in lower:
+            return "Earbud"
+        return "Over-ear"
+
+    async def search_headphones(self, query: str) -> dict:
+        """Searches the AutoEq index. Returns {ok, results: [{id, name, source, form}], error?}."""
+        query = (query or "").strip()
+        if len(query) < 2:
+            return {"ok": True, "results": []}
+        entries = await self._autoeq_index()
+        if not entries:
+            return {"ok": False, "results": [], "error": "No internet connection"}
+        compact = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())
+        tokens = [compact(t) for t in query.split() if compact(t)]
+        matches = []
+        for e in entries:
+            name = compact(e["name"])
+            if all(t in name for t in tokens):
+                priority = AUTOEQ_SOURCE_PRIORITY.index(e["source"]) if e["source"] in AUTOEQ_SOURCE_PRIORITY \
+                    else len(AUTOEQ_SOURCE_PRIORITY)
+                matches.append((0 if compact(query) in name else 1, len(e["name"]), e["name"].lower(), priority, e))
+        matches.sort(key=lambda m: m[:4])
+        results = [{
+            "id": e["path"],
+            "name": e["name"],
+            "source": e["source"] + (f" ({e['rig']})" if e["rig"] else ""),
+            "form": self._headphone_form(e["path"]),
+        } for *_, e in matches[:40]]
+        return {"ok": True, "results": results}
+
+    @staticmethod
+    def _eq_profiles() -> list[dict]:
+        return list(settings.getSetting("eq_profiles", []) or [])
+
+    async def get_eq_state(self) -> dict:
+        profiles = self._eq_profiles()
+        active = settings.getSetting("eq_active_profile", None)
+        if active not in [p["id"] for p in profiles]:
+            active = profiles[0]["id"] if profiles else None
+        return {
+            "enabled": bool(settings.getSetting("eq_enabled", False)) and active is not None,
+            "active": active,
+            "profiles": [{"id": p["id"], "label": f"{p['name']} · {p['source']}"} for p in profiles],
+        }
+
+    async def add_headphone_profile(self, profile_id: str) -> dict:
+        """Downloads an AutoEq profile, stores it offline, selects it and turns the EQ on."""
+        entry = next((e for e in await self._autoeq_index() if e["path"] == profile_id), None)
+        if entry is None:
+            return {"ok": False, "error": "Headphones not found"}
+        import urllib.parse
+        folder = entry["path"].rsplit("/", 1)[-1]
+        url = f"{AUTOEQ_RESULTS_URL}/{urllib.parse.quote(entry['path'])}/{urllib.parse.quote(folder)}%20ParametricEQ.txt"
+        data = await self._download(url)
+        if not data:
+            return {"ok": False, "error": "Download failed"}
+        try:
+            parsed = parse_autoeq_parametric(data.decode("utf-8", errors="replace"))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        profile = {
+            "id": entry["path"],
+            "name": entry["name"],
+            "source": entry["source"],
+            "form": self._headphone_form(entry["path"]),
+            "preamp": parsed["preamp"],
+            "filters": parsed["filters"],
+        }
+        profiles = [p for p in self._eq_profiles() if p["id"] != profile["id"]] + [profile]
+        settings.setSetting("eq_profiles", profiles)
+        settings.setSetting("eq_active_profile", profile["id"])
+        settings.setSetting("eq_enabled", True)
+        await self._apply_eq()
+        decky.logger.info("Added headphone EQ '%s' (%s): %s filters, preamp %s dB",
+                          profile["name"], profile["source"], len(profile["filters"]), profile["preamp"])
+        return {"ok": True, "state": await self.get_eq_state()}
+
+    async def remove_headphone_profile(self, profile_id: str) -> dict:
+        profiles = [p for p in self._eq_profiles() if p["id"] != profile_id]
+        settings.setSetting("eq_profiles", profiles)
+        if settings.getSetting("eq_active_profile", None) == profile_id:
+            settings.setSetting("eq_active_profile", profiles[0]["id"] if profiles else None)
+        await self._apply_eq()
+        return await self.get_eq_state()
+
+    async def set_eq_enabled(self, enabled: bool) -> dict:
+        settings.setSetting("eq_enabled", bool(enabled))
+        await self._apply_eq()
+        return await self.get_eq_state()
+
+    async def set_eq_profile(self, profile_id: str) -> dict:
+        if profile_id in [p["id"] for p in self._eq_profiles()]:
+            settings.setSetting("eq_active_profile", profile_id)
+            await self._apply_eq()
+        return await self.get_eq_state()
+
+    def _active_eq_profile(self) -> dict | None:
+        if not settings.getSetting("eq_enabled", False):
+            return None
+        active = settings.getSetting("eq_active_profile", None)
+        return next((p for p in self._eq_profiles() if p["id"] == active), None)
+
+    def _write_eq_file(self) -> tuple[float, dict]:
+        preamp, values = eq_slot_values(self._active_eq_profile())
+        lines = [f"pre {preamp:.6f}"] + [f"{slot} {f:.2f} {q:.4f} {g:.2f}" for slot, (f, q, g) in values.items()]
+        os.makedirs(pipewire_config_path, exist_ok=True)
+        with open(eq_settings_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        return preamp, values
+
+    async def _apply_eq(self) -> bool:
+        """Writes the EQ values for the next filter load and applies them to the running filter."""
+        preamp, values = self._write_eq_file()
+        filter_name, _ = await get_virtual_surround_sink_names()
+        sink = next((s for s in await self.list_sinks() or [] if s.get("name") == filter_name), None)
+        object_id = self._object_id_from_sink(sink) if sink else None
+        if object_id is None:
+            return False  # Filter not running; the file is read when it is loaded.
+        pairs = []
+        for side in ("L", "R"):
+            pairs.append((f'"eq{side}_pre:Gain 1"', f"{preamp:.6f}"))
+            for slot, (freq, q, gain) in values.items():
+                pairs += [(f'"eq{side}_{slot}:Freq"', f"{freq:.2f}"), (f'"eq{side}_{slot}:Q"', f"{q:.4f}"),
+                          (f'"eq{side}_{slot}:Gain"', f"{gain:.2f}")]
+        # pw-cli silently drops a set-param with more than ~20 values (fixed size buffer), so send small batches.
+        batch_size = 15
+        ok = True
+        for start in range(0, len(pairs), batch_size):
+            params = " ".join(f"{k} {v}" for k, v in pairs[start:start + batch_size])
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    "pw-cli", "set-param", str(object_id), "Props", "{ params = [ " + params + " ] }",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=subprocess_exec_env())
+                _, err = await process.communicate()
+                if process.returncode != 0:
+                    decky.logger.warning("Applying EQ failed: %s", err.decode(errors="replace").strip())
+                    ok = False
+            except Exception as e:
+                decky.logger.error("Applying EQ failed: %s", e)
+                return False
+        return ok
 
     # ---- Channel activity meter ----------------------------------------------------------------
     #
