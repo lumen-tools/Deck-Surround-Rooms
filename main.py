@@ -1380,6 +1380,16 @@ class Plugin:
         if default_sink_id is None or default_sink_index is None:
             decky.logger.warning("Unable to determine fallback default sink; leaving default unchanged.")
 
+        # While everything is off, the output that is playing right now is the suggestion for surround/EQ:
+        # switching them on keeps exactly these headphones. The internal speakers are never taken over; then
+        # the last used headphones stay chosen (or the first connected external output if they are gone).
+        if await self._routing_mode() == "off":
+            playing = await self.get_default_sink_name()
+            playing_sink = next((s for s in await self._external_outputs(sinks) if s.get("name") == playing), None)
+            if playing_sink is not None and settings.getSetting("output_device", None) != playing:
+                decky.logger.info("Output for surround/EQ follows the current output: %s", playing)
+                settings.setSetting("output_device", playing)
+
         # The real device behind surround/EQ: the output chosen in the plugin, or the first external one.
         # Without any external output (only the speakers) everything pauses.
         output = await self._output_target(sinks)
