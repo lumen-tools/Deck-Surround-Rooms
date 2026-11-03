@@ -668,15 +668,9 @@ class Plugin:
             # Object ids get reused by PipeWire; never touch a stale one.
             self._vss_object_id = None
             return
-        # The real output device: the default sink, or the highest priority sink when one of the
-        # virtual surround sinks is the default (same rule the service uses for linking).
-        output = None
-        default_name = await self.get_default_sink_name()
-        if default_name and default_name not in virtual_names:
-            output = next((sink for sink in sinks if sink.get("name") == default_name), None)
-        if output is None:
-            output_id = await self.get_highest_priority_sink_id()
-            output = next((sink for sink in sinks if self._object_id_from_sink(sink) == output_id), None)
+        # The real output device: the output chosen in the plugin (the one the service plays to).
+        # It used to be "the highest priority sink", which with two headphones connected adjusted the wrong one.
+        output = await self._output_target(sinks)
         if output is None or output.get("name") in virtual_names:
             return
 
@@ -1158,6 +1152,8 @@ class Plugin:
         if getattr(self, "_written_output_target", "?") == name:
             return
         self._written_output_target = name
+        # New output device: pair the volume with it right away (see check_state), not on the next key press.
+        self._output_target_changed = True
         with contextlib.suppress(Exception):
             os.makedirs(pipewire_config_path, exist_ok=True)
             with open(output_target_path, "w", encoding="utf-8") as f:
@@ -1293,6 +1289,7 @@ class Plugin:
         output_id = await self.get_highest_priority_sink_id()
         managed |= self._sink_identifiers(
             next((sink for sink in sinks if self._object_id_from_sink(sink) == output_id), None))
+        managed |= self._sink_identifiers(await self._output_target(sinks))
         default_name = await self.get_default_sink_name()
         managed |= self._sink_identifiers(next((sink for sink in sinks if sink.get("name") == default_name), None))
         return managed
@@ -1311,6 +1308,10 @@ class Plugin:
         # back after the switch has been applied.
         async with self._state_lock:
             await self._check_state()
+        if getattr(self, "_output_target_changed", False):
+            self._output_target_changed = False
+            with contextlib.suppress(Exception):
+                await self.sync_volumes()
 
     async def _check_state(self):
         settings.read()
@@ -2088,7 +2089,10 @@ class Plugin:
             _, device_name = await get_virtual_surround_sink_names()
             sink_name = device_name
         elif sink == "default":
-            fallback_sink_id = await self.get_highest_priority_sink_id()
+            # The same device surround plays to (the chosen output), so the comparison is fair.
+            chosen = await self._output_target(await self.list_sinks() or [])
+            sink_name = chosen.get("name") if chosen else None
+            fallback_sink_id = await self.get_highest_priority_sink_id() if not sink_name else None
             if fallback_sink_id is not None:
                 sinks = await self.list_sinks() or []
                 fallback_sink = next(
