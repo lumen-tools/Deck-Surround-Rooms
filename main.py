@@ -1148,6 +1148,11 @@ class Plugin:
         await self.check_state()
         return await self.get_outputs()
 
+    def _request_relink(self):
+        with contextlib.suppress(Exception):
+            subprocess.Popen([os.path.join(script_directory, "service.sh"), "relink"], env=subprocess_exec_env(),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     def _write_output_target(self, name: str | None):
         if getattr(self, "_written_output_target", "?") == name:
             return
@@ -1159,9 +1164,7 @@ class Plugin:
             with open(output_target_path, "w", encoding="utf-8") as f:
                 f.write((name or "") + "\n")
         # Let the service re-link right away instead of on its next check.
-        with contextlib.suppress(Exception):
-            subprocess.Popen([os.path.join(script_directory, "service.sh"), "relink"], env=subprocess_exec_env(),
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self._request_relink()
 
     async def _virtual_sink_names(self) -> set[str]:
         filter_name, device_name = await get_virtual_surround_sink_names()
@@ -1173,6 +1176,14 @@ class Plugin:
             decky.logger.warning("Routing: virtual sinks are not available")
             return False
         self._vss_guard_fast_until = time.monotonic() + 5.0
+        # A missing link after switching meant silence until the volume was changed (which made the service
+        # check its links). Let the service check right away and once more when everything has settled.
+        self._request_relink()
+
+        async def relink_later():
+            await asyncio.sleep(1.5)
+            self._request_relink()
+        asyncio.get_event_loop().create_task(relink_later())
         for attempt in range(10):
             await self.check_state()
             if await self._routing_is_applied():
@@ -1405,6 +1416,11 @@ class Plugin:
             # Off: keep whatever real output is the default (the user's choice).
             target_object_id, target_index, target_label = (
                 self._object_id_from_sink(real_default), self._sink_index_from_entry(real_default), current_default)
+        elif output is not None:
+            # Switched off (the default is still a virtual sink): continue on the headphones that were chosen
+            # as output, not on whatever device has the highest priority.
+            target_object_id, target_index, target_label = (
+                self._object_id_from_sink(output), self._sink_index_from_entry(output), output.get("name"))
         else:
             target_object_id, target_index, target_label = default_sink_id, default_sink_index, "the output device"
         # Only change the default when the mode changes, or (when off) if it is stuck on a virtual sink.
