@@ -540,6 +540,7 @@ class Plugin:
         self._background_task = self.loop.create_task(self.background_tasks())
         self._volume_sync_task = self.loop.create_task(self.volume_sync_task())
         self._vss_guard_task = self.loop.create_task(self.vss_volume_guard_task())
+        self._vss_monitor_task = self.loop.create_task(self.vss_volume_monitor_task())
         decky.logger.info("Plugin main started")
 
     # Function called first during the unload process, utilize this to handle your plugin being stopped, but not
@@ -550,6 +551,12 @@ class Plugin:
         self.stop_event.set()
         with contextlib.suppress(Exception):
             await self._stop_channel_meter()
+        monitor = getattr(self, "_vss_monitor_task", None)
+        if monitor:
+            monitor.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await monitor
+        await self._stop_pw_cli()
         if self._vss_guard_task:
             self._vss_guard_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -745,7 +752,9 @@ class Plugin:
             except Exception as e:
                 decky.logger.debug("VSS volume guard: %s", e)
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self.stop_event.wait(), timeout=0.5 if fast else 2.0)
+                # While the event monitor works it reacts immediately; the guard is only a safety net then.
+                idle = 10.0 if getattr(self, "_vss_monitor_ok", False) else 2.0
+                await asyncio.wait_for(self.stop_event.wait(), timeout=0.5 if fast else idle)
 
     async def _neutralize_vss_volume(self, vss_sink: dict):
         object_id = self._object_id_from_sink(vss_sink)
@@ -756,6 +765,7 @@ class Plugin:
         await self._set_soft_volumes(object_id, self._vss_channels)
 
     async def _set_soft_volumes(self, object_id: int, n_channels: int):
+        self._vss_own_change_at = time.monotonic()  # the volume monitor ignores the echo of this change
         volumes = ", ".join(["1.0"] * n_channels)
         try:
             process = await asyncio.create_subprocess_exec(
@@ -770,6 +780,153 @@ class Plugin:
         except Exception as e:
             decky.logger.warning("pw-cli set-param softVolumes failed: %s", e)
             self._vss_object_id = None
+
+    # ---- Immediate reaction to volume changes on the virtual sink ------------------------------------
+    #
+    # Steam sets the volume of the virtual sink directly in PipeWire. That turns the sink's own (software)
+    # attenuation back on, so the volume would apply twice (dip while changing the volume; silence until
+    # the volume is changed again if it happens while switching). PulseAudio events don't report it, so
+    # the guard above used to catch it only every 2 s. PipeWire's own monitor (pw-dump -m, JSON) reports
+    # every change of the sink's channel volumes / mute right away; the attenuation is then neutralised
+    # through a pw-cli connection that stays open. Our own neutralising doesn't change the reported
+    # channel volumes, so it can't trigger itself.
+
+    async def _pw_cli_send(self, line: str) -> bool:
+        proc = getattr(self, "_pw_cli", None)
+        if proc is None or proc.returncode is not None:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "pw-cli", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL, env=subprocess_exec_env())
+            except Exception as e:
+                decky.logger.warning("Unable to start pw-cli: %s", e)
+                self._pw_cli = None
+                return False
+            self._pw_cli = proc
+            fresh = True
+        else:
+            fresh = False
+        try:
+            proc.stdin.write((line + "\n").encode())
+            await proc.stdin.drain()
+            # A pw-cli that was just started may not be connected yet and can drop the first command:
+            # report it as not sent, so the caller also uses the one-shot command this time.
+            return not fresh
+        except Exception:
+            await self._stop_pw_cli()
+            return False
+
+    async def _stop_pw_cli(self):
+        proc = getattr(self, "_pw_cli", None)
+        self._pw_cli = None
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(Exception):
+                proc.kill()
+                await asyncio.wait_for(proc.wait(), timeout=2)
+
+    async def _neutralize_fast(self, object_id: int):
+        # Our own change is reported by the monitor as well; remember when we sent it to ignore the echo.
+        self._vss_own_change_at = time.monotonic()
+        n_channels = self._vss_channels or 8
+        volumes = ", ".join(["1.0"] * n_channels)
+        if not await self._pw_cli_send(f'set-param {object_id} Props {{ "softVolumes": [ {volumes} ] }}'):
+            await self._set_soft_volumes(object_id, n_channels)
+
+    async def _on_vss_volume_event(self, object_id: int, changed: bool):
+        # Neutralise first (ends the double attenuation right away), then mirror the volume to the device.
+        await self._neutralize_fast(object_id)
+        if changed:
+            with contextlib.suppress(Exception):
+                await self.sync_volumes()
+
+        # PipeWire can report the change slightly before it applies the attenuation: check again shortly after.
+        async def follow_up():
+            for delay in (0.06, 0.24):
+                await asyncio.sleep(delay)
+                if self._vss_object_id == object_id:
+                    await self._neutralize_fast(object_id)
+        previous = getattr(self, "_vss_follow_up", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._vss_follow_up = asyncio.get_event_loop().create_task(follow_up())
+
+    @staticmethod
+    def _volume_key(params: dict) -> tuple | None:
+        volumes = params.get("channelVolumes")
+        if not isinstance(volumes, list):
+            return None
+        return tuple(round(float(v), 4) for v in volumes), bool(params.get("mute"))
+
+    async def vss_volume_monitor_task(self):
+        decky.logger.info("Volume monitor started")
+        decoder = json.JSONDecoder()
+        while not self.stop_event.is_set():
+            object_id = self._vss_object_id
+            if object_id is None or await self._routing_mode() == "off":
+                self._vss_monitor_ok = False
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=1.0)
+                continue
+            process = None
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    "pw-dump", "-m", str(object_id), stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL, env=subprocess_exec_env())
+                buffer, last, last_action = "", None, 0.0
+                while not self.stop_event.is_set() and self._vss_object_id == object_id:
+                    try:
+                        chunk = await asyncio.wait_for(process.stdout.read(65536), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        if await self._routing_mode() == "off":
+                            break
+                        continue
+                    if not chunk:
+                        break
+                    buffer += chunk.decode("utf-8", errors="replace")
+                    while True:
+                        text = buffer.lstrip()
+                        if not text:
+                            buffer = ""
+                            break
+                        try:
+                            update, end = decoder.raw_decode(text)
+                        except ValueError:
+                            buffer = text  # incomplete, wait for more
+                            break
+                        buffer = text[end:]
+                        for obj in update if isinstance(update, list) else [update]:
+                            if not isinstance(obj, dict) or obj.get("id") != object_id:
+                                continue
+                            props = ((obj.get("info") or {}).get("params") or {}).get("Props") or []
+                            for params in props:
+                                key = self._volume_key(params) if isinstance(params, dict) else None
+                                if key is None:
+                                    continue
+                                self._vss_monitor_ok = True
+                                # Also react when the same value is set again (that re-enables the attenuation
+                                # too), but at most every 150 ms so nothing can ever loop.
+                                now = time.monotonic()
+                                if key == last and now - getattr(self, "_vss_own_change_at", 0.0) < 0.05:
+                                    continue  # echo of our own neutralising
+                                if key != last or now - last_action > 0.15:
+                                    changed, last, last_action = key != last, key, now
+                                    await self._on_vss_volume_event(object_id, changed)
+                    if len(buffer) > 4 * 1024 * 1024:
+                        buffer = ""  # never grow without bounds on unexpected output
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                decky.logger.warning("Volume monitor error: %s", e)
+            finally:
+                self._vss_monitor_ok = False
+                if process is not None and process.returncode is None:
+                    with contextlib.suppress(Exception):
+                        process.kill()
+                        await process.wait()
+            # pw-dump ended (sink re-created, pipewire restarted, ...): retry shortly.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.stop_event.wait(), timeout=1.0)
+        decky.logger.info("Volume monitor stopped")
 
     async def volume_sync_task(self):
         """Runs sync_volumes whenever PulseAudio/PipeWire reports a sink or server change."""
