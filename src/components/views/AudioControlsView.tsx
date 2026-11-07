@@ -244,7 +244,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
               <>
                 No sound? Change the volume briefly.
                 <br />
-                Switching mid-game may mute some games until restarted.
+                Switching mid-game can mute all audio until restart.
               </>
             }
             checked={!!surroundEnabled}
