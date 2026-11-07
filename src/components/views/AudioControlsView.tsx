@@ -240,7 +240,13 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
                 {isSwitching && <Spinner style={{ width: '16px', height: '16px' }} />}
               </span>
             }
-            description="No sound? Change the volume briefly."
+            description={
+              <>
+                No sound? Change the volume briefly.
+                <br />
+                Switching mid-game may mute some games until restarted.
+              </>
+            }
             checked={!!surroundEnabled}
             disabled={surroundEnabled === null || isSwitching || !outputAvailable}
             onChange={(enabled) => toggleSurround(enabled)}
