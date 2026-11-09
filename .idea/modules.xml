@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/decky-virtual-surround-sound.iml" filepath="$PROJECT_DIR$/.idea/decky-virtual-surround-sound.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/deck-surround-rooms.iml" filepath="$PROJECT_DIR$/.idea/deck-surround-rooms.iml" />
     </modules>
   </component>
 </project>

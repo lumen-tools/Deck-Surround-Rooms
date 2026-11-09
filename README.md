@@ -1,8 +1,8 @@
-# Virtual Surround + Rooms
+# DeckSurroundRooms
 
 > **No sound after switching?** Change the volume briefly (up or down). The sound comes back immediately.
 
-Virtual Surround + Rooms is a Decky plugin that provides a virtual audio output device—**Virtual Surround + Rooms**—for games and applications. By using a custom Pipewire filter-chain module, this plugin converts 7.1 surround sound into immersive binaural audio tailored for headphone use.
+DeckSurroundRooms is a Decky plugin that provides a virtual audio output device—**DeckSurroundRooms**—for games and applications. By using a custom Pipewire filter-chain module, this plugin converts 7.1 surround sound into immersive binaural audio tailored for headphone use.
 
 > **Note:** This solution is optimized for headphone listeners. While it may work for games targeting surround sound outputs (such as theatre systems), if the game natively supports surround-to-headphone processing, that option is recommended.
 
@@ -10,13 +10,14 @@ Users of this plugin are able to place a custom .wav from the HRTF Database (<ht
 
 ## Installation
 
-Virtual Surround + Rooms is not in the Decky Plugin Store. Install it from the [GitHub releases](https://github.com/lumen-tools/Decky-Virtual-Surround-Rooms/releases/latest):
+DeckSurroundRooms is not in the Decky Plugin Store. Install it from the [GitHub releases](https://github.com/lumen-tools/Deck-Surround-Rooms/releases/latest):
 
 1. If the original *Virtual Surround Sound* plugin is installed, uninstall it first. Both use the same audio service and would get in each other's way.
+   The same applies to *Virtual Surround + Rooms*, the previous name of this plugin: uninstall it before installing DeckSurroundRooms. Your settings are taken over automatically.
 2. In Decky, open **Settings → General** and turn on **Developer mode**.
 3. Open **Settings → Developer** and choose **Install Plugin from URL**. Enter:
    ```
-   https://github.com/lumen-tools/Decky-Virtual-Surround-Rooms/releases/latest/download/decky-virtual-surround-rooms.zip
+   https://github.com/lumen-tools/Deck-Surround-Rooms/releases/latest/download/deck-surround-rooms.zip
    ```
    Alternatively, download the ZIP from the latest release and use **Install Plugin from ZIP File**.
 
@@ -26,11 +27,11 @@ To update, repeat step 3. Your settings are kept.
 
 ### Room simulation instead of plain virtualisation
 
-Most headphone virtualisers convolve the audio with anechoic head-related impulse responses (HRIRs). These only describe the direct sound from each speaker to the ears, which tends to sound like it is coming from inside the head. Virtual Surround + Rooms uses binaural room impulse responses (BRIRs) measured in real studios and rooms instead. They also contain the early reflections and the reverberation of the room, which gives much better externalisation (out-of-head localisation) and a natural sense of distance, as if listening to a real 7.1 speaker setup in that room.
+Most headphone virtualisers convolve the audio with anechoic head-related impulse responses (HRIRs). These only describe the direct sound from each speaker to the ears, which tends to sound like it is coming from inside the head. DeckSurroundRooms uses binaural room impulse responses (BRIRs) measured in real studios and rooms instead. They also contain the early reflections and the reverberation of the room, which gives much better externalisation (out-of-head localisation) and a natural sense of distance, as if listening to a real 7.1 speaker setup in that room.
 
 ### Bug fixes and improvements
 
-Virtual Surround + Rooms is based on [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5 and continues it with many bug fixes and improvements:
+DeckSurroundRooms (formerly *Virtual Surround + Rooms*) is based on [Virtual Surround Sound](https://github.com/DeckSettings/decky-virtual-surround-sound) by Josh.5 and continues it with many bug fixes and improvements:
 
 - **Correct channels and levels:** Every speaker is normalised to the same loudness, left and right are symmetric, and switching presets no longer changes the volume. The test tone no longer varies from run to run.
 - **Real rooms with clear licences:** The presets derived from commercial products, whose licensing was unclear, were replaced with eight freely licensed measurements of real studios and rooms.
@@ -69,7 +70,7 @@ Please make sure to install pnpm v9 to prevent issues with CI during plugin subm
 npm i -g pnpm@9
 ```
 
-### Building Virtual Surround + Rooms
+### Building DeckSurroundRooms
 
 1. Clone the repository.
 2. In your local fork/own plugin-repository run these commands:
@@ -113,7 +114,7 @@ ln -sf ./defaults/hrir-audio hrir-audio
 ln -sf ./defaults/service.sh service.sh
 ```
 
-Install virtual surround sound service
+Install the audio service
 
 ```bash
 ./service.sh install
@@ -127,7 +128,7 @@ python ./main.py
 
 ## Notes on how this works on SteamOS
 
-SteamOS ships with PipeWire for low-latency audio handling and WirePlumber as its default session manager. WirePlumber negotiates which nodes become available to the desktop and what devices Steam exposes in Settings, while PipeWire handles the actual DSP graph. Virtual Surround + Rooms slots into that graph by loading a custom `module-filter-chain` definition that mixes 7.1 input down to binaural headphone output.
+SteamOS ships with PipeWire for low-latency audio handling and WirePlumber as its default session manager. WirePlumber negotiates which nodes become available to the desktop and what devices Steam exposes in Settings, while PipeWire handles the actual DSP graph. DeckSurroundRooms slots into that graph by loading a custom `module-filter-chain` definition that mixes 7.1 input down to binaural headphone output.
 
 Instead of dropping a static filter-chain file into `~/.config/pipewire`, the plugin installs a user-level systemd unit that calls `service.sh`. The script dynamically loads and unloads the filter through PipeWire's CLI so the module is registered immediately, without needing to restart PipeWire or WirePlumber (those restarts tend to upset Steam until you reboot the client). This approach also keeps Steam's Audio Output list clean: the filter is advertised directly to PipeWire so it just appears as another routable node rather than an extra, confusing device entry inside Steam Settings.
 

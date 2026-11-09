@@ -47,6 +47,32 @@ settings_dir = os.environ.get("DECKY_PLUGIN_SETTINGS_DIR", settings_dir)
 ensure_directory_exists(log_dir)
 ensure_directory_exists(settings_dir)
 
+# The plugin was renamed from "Virtual Surround + Rooms" (directory decky-virtual-surround-rooms) to
+# DeckSurroundRooms (directory deck-surround-rooms). Decky keys the settings directory by the plugin
+# directory, so take over the old settings once, before they are read below.
+LEGACY_PLUGIN_DIR_NAMES = ("decky-virtual-surround-rooms",)
+
+
+def migrate_legacy_settings_dir(target_dir: str) -> None:
+    try:
+        if os.listdir(target_dir):
+            return
+    except OSError:
+        return
+    settings_root = os.path.dirname(os.path.abspath(target_dir))
+    for legacy_name in LEGACY_PLUGIN_DIR_NAMES:
+        legacy_dir = os.path.join(settings_root, legacy_name)
+        if legacy_name == os.path.basename(os.path.abspath(target_dir)) or not os.path.isdir(legacy_dir):
+            continue
+        try:
+            shutil.copytree(legacy_dir, target_dir, dirs_exist_ok=True)
+        except OSError:
+            continue
+        return
+
+
+migrate_legacy_settings_dir(settings_dir)
+
 # Export the directories to env
 decy_plugin_dirs = {
     "DECKY_PLUGIN_LOG_DIR": log_dir,
@@ -612,13 +638,13 @@ class Plugin:
 
     # ---- Volume sync ---------------------------------------------------------------------------
     #
-    # The volume of the "Virtual Surround Sound" sink is mirrored onto the real output device and
+    # The volume of the "DeckSurroundRooms" sink is mirrored onto the real output device and
     # vice versa. The VSS sink itself keeps showing its volume but does not apply it: its internal
     # software volume ("softVolumes") is set back to 1.0 after every change. This is the same thing
     # PipeWire's filter-chain does internally for capture.volumes, but without touching the graph.
-    #   - Steam volume slider on "Virtual Surround Sound"  -> real device gets the same volume
+    #   - Steam volume slider on "DeckSurroundRooms"  -> real device gets the same volume
     #   - real device volume changes (e.g. headphones plugged in and their saved volume restored)
-    #                                                       -> "Virtual Surround Sound" shows it
+    #                                                       -> "DeckSurroundRooms" shows it
     # The effective volume is therefore always the real device volume, whichever output is selected.
     # Nothing is ever raised artificially, so switching outputs can't cause a sudden volume jump.
 
@@ -698,7 +724,7 @@ class Plugin:
                 await self._pactl("set-sink-mute", device_name, "1" if out_mute else "0")
                 vss_mute = out_mute
         else:
-            # The user changed the "Virtual Surround Sound" volume (e.g. the Steam volume slider).
+            # The user changed the "DeckSurroundRooms" volume (e.g. the Steam volume slider).
             if abs(vss_level - out_level) > tolerance:
                 await self._pactl("set-sink-volume", output_name, str(vss_level))
                 out_level = vss_level
@@ -1051,7 +1077,7 @@ class Plugin:
     # ---- Master switch -------------------------------------------------------------------------
     #
     # One switch controls everything:
-    #   ON  -> "Virtual Surround Sound" is the default output and every app (that does not pin its own
+    #   ON  -> "DeckSurroundRooms" is the default output and every app (that does not pin its own
     #          output device) is moved onto it.
     #   OFF -> the real output device is the default and every app is moved back onto it.
     # Older versions had a separate "use as default sink" option plus a per-app "Enable" switch, which
@@ -1080,7 +1106,7 @@ class Plugin:
     async def _routing_mode(self) -> str:
         """
         Where the apps play to:
-          "surround" -> "Virtual Surround Sound" device (room simulation + headphone EQ)
+          "surround" -> "DeckSurroundRooms" device (room simulation + headphone EQ)
           "eq"       -> "Headphone EQ" sink (headphone EQ only, surround switched off)
           "off"      -> the real output device
         """
@@ -1336,23 +1362,23 @@ class Plugin:
             decky.logger.error("Unable to resolve virtual surround sink names")
             return
 
-        # Find the sinks for the Virtual Surround Sound nodes
+        # Find the sinks for the DeckSurroundRooms nodes
         virtual_surround_filter_sink = next((sink for sink in sinks if sink.get("name")
                                              == filter_name), None)
         virtual_surround_device_sink = next((sink for sink in sinks if sink.get("name")
                                              == device_name), None)
         if not virtual_surround_filter_sink:
-            decky.logger.error("Required sink not found. Virtual Surround Sound is missing.")
+            decky.logger.error("Required sink not found. DeckSurroundRooms is missing.")
             return
 
         virtual_surround_object_id = self._object_id_from_sink(virtual_surround_filter_sink)
         virtual_surround_index = self._sink_index_from_entry(virtual_surround_filter_sink)
         if virtual_surround_object_id is None or virtual_surround_index is None:
-            decky.logger.error("Virtual Surround Sound sink is missing required metadata.")
+            decky.logger.error("DeckSurroundRooms sink is missing required metadata.")
             return
         virtual_surround_device_object_id = self._object_id_from_sink(virtual_surround_device_sink)
         virtual_surround_device_index = self._sink_index_from_entry(virtual_surround_device_sink)
-        # Apps are only ever routed to the "Virtual Surround Sound" device sink, never directly into the
+        # Apps are only ever routed to the "DeckSurroundRooms" device sink, never directly into the
         # filter. While the service is starting the device sink may not exist yet; routing then waits.
         virtual_surround_target_index = virtual_surround_device_index
 
@@ -1418,7 +1444,7 @@ class Plugin:
                              and current_default not in virtual_names), None)
         if mode == "surround":
             target_object_id, target_index, target_label = (
-                virtual_surround_device_object_id, virtual_surround_target_index, "Virtual Surround Sound")
+                virtual_surround_device_object_id, virtual_surround_target_index, "DeckSurroundRooms")
         elif mode == "eq":
             target_object_id, target_index, target_label = (
                 self._object_id_from_sink(eq_sink), self._sink_index_from_entry(eq_sink), "Headphone EQ")
@@ -1493,7 +1519,7 @@ class Plugin:
 
     async def _reload_filter(self):
         """
-        Reloads only the filter module (new HRIR/SOFA file). The "Virtual Surround Sound" sink that
+        Reloads only the filter module (new HRIR/SOFA file). The "DeckSurroundRooms" sink that
         the apps are connected to stays in place, so apps keep their output. Restarting the whole
         service used to remove that sink, which moved apps to another output or muted them.
         """
@@ -1887,7 +1913,7 @@ class Plugin:
 
     # ---- Channel activity meter ----------------------------------------------------------------
     #
-    # Shows which of the 8 input channels of the "Virtual Surround Sound" device currently carry
+    # Shows which of the 8 input channels of the "DeckSurroundRooms" device currently carry
     # audio. PipeWire computes the peaks itself (resample.peaks, the same mechanism pavucontrol uses
     # for its level meters) and delivers only METER_RATE values per second and channel, so the plugin
     # never touches the audio samples. The recorder only runs while the frontend polls the levels
@@ -2110,7 +2136,7 @@ class Plugin:
         """
         sink_name = None
         if sink in ("virtual-surround", "virtual-surround-sound-filter"):
-            # Play into the "Virtual Surround Sound" device (the same input the apps use), so the test
+            # Play into the "DeckSurroundRooms" device (the same input the apps use), so the test
             # takes the same path as game audio and shows up in the channel meter.
             _, device_name = await get_virtual_surround_sink_names()
             sink_name = device_name
@@ -2918,7 +2944,7 @@ class CLIMenu:
             ("List running apps (sink inputs)", self.list_sink_inputs_action),
             ("Get highest priority sink", self.highest_priority_sink_action),
             ("Get default sink", self.default_sink_action),
-            ("Toggle Virtual Surround + Rooms on/off", self.toggle_default_surround_action),
+            ("Toggle DeckSurroundRooms on/off", self.toggle_default_surround_action),
             ("List HRIR files", self.list_hrir_files_action),
             ("Set HRIR file", self.set_hrir_file_action),
             ("List SOFA files", self.list_sofa_files_action),
@@ -3035,10 +3061,10 @@ class CLIMenu:
         current = bool(self.helper.run(self.plugin.get_surround_sink_default()))
         if current:
             self.helper.run(self.plugin.disable_surround_sink_default())
-            self._show_message(stdscr, "Virtual Surround", "Virtual Surround + Rooms is now off.")
+            self._show_message(stdscr, "DeckSurroundRooms", "DeckSurroundRooms is now off.")
         else:
             self.helper.run(self.plugin.enable_surround_sink_default())
-            self._show_message(stdscr, "Virtual Surround", "Virtual Surround + Rooms is now on.")
+            self._show_message(stdscr, "DeckSurroundRooms", "DeckSurroundRooms is now on.")
 
     def list_hrir_files_action(self, stdscr):
         files = self.helper.run(self.plugin.get_hrir_file_list()) or []
@@ -3182,7 +3208,7 @@ class CLIMenu:
         while True:
             selection = self._navigate_menu(
                 stdscr,
-                "Virtual Surround + Rooms",
+                "DeckSurroundRooms",
                 labels + ["Exit"],
                 "↑/↓ navigate • Enter select • q exit"
             )
@@ -3200,7 +3226,7 @@ class CLIMenu:
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Virtual Surround + Rooms CLI")
+    parser = argparse.ArgumentParser(description="DeckSurroundRooms CLI")
     parser.add_argument("--menu", action="store_true", help="Launch the curses menu UI")
     parser.add_argument("--list-sinks", action="store_true", help="List available sinks")
     parser.add_argument("--list-running-apps", action="store_true", help="List sink inputs (running apps)")

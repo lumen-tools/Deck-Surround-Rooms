@@ -33,18 +33,21 @@ mix_gain="0.5"
 lfe_cutoff_hz="120"
 
 # Configure pipewire modules names/descriptions
+# The descriptions are what the user sees (Steam, pavucontrol). The node names, the vss-* prefix and the
+# service name are technical IDs inherited from Virtual Surround Sound. They stay unchanged so existing
+# installs, stored stream routings and the shared audio service keep working after the rename.
 virtual_surround_filter_sink_node_name="vss-filter"
-virtual_surround_filter_sink_description="Virtual Surround + Rooms Filter"
+virtual_surround_filter_sink_description="DeckSurroundRooms Filter"
 virtual_surround_filter_sink_capture_node_name="input.vss-filter"
 virtual_surround_filter_sink_playback_node_name="output.vss-filter"
 if [[ -n "${VIRTUAL_SURROUND_SINK_SUFFIX:-}" ]]; then
     virtual_surround_filter_sink_node_name="vss-filter"
-    virtual_surround_filter_sink_description="Virtual Surround + Rooms (${VIRTUAL_SURROUND_SINK_SUFFIX:-})"
+    virtual_surround_filter_sink_description="DeckSurroundRooms (${VIRTUAL_SURROUND_SINK_SUFFIX:-})"
     virtual_surround_filter_sink_capture_node_name="input.vss-filter-${VIRTUAL_SURROUND_SINK_SUFFIX:-}"
     virtual_surround_filter_sink_playback_node_name="output.vss-filter-${VIRTUAL_SURROUND_SINK_SUFFIX:-}"
 fi
 virtual_surround_device_sink_node_name="virtual-surround-sound"
-virtual_surround_device_sink_description="Virtual Surround + Rooms"
+virtual_surround_device_sink_description="DeckSurroundRooms"
 virtual_surround_device_sink_capture_node_name="Virtual Surround Sound"
 virtual_surround_device_sink_playback_node_name="output.virtual-surround-sound"
 # Stereo sink with only the headphone EQ (no room simulation), used when surround is off but the
@@ -918,7 +921,7 @@ wait_for_audio_event() {
 run() {
     trap '_handle_signal' INT QUIT HUP TERM ERR
     # SIGUSR1 reloads only the filter module (e.g. after the HRIR file changed). The
-    # "Virtual Surround Sound" device sink that the apps are connected to stays in place, so
+    # "DeckSurroundRooms" device sink that the apps are connected to stays in place, so
     # apps are not moved to another output and keep playing once the new filter is linked.
     trap 'filter_reload_requested="true"' USR1
     # SIGUSR2: the plugin changed the output device; re-link right away.

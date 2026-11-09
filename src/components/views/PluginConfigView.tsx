@@ -69,7 +69,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
         return current === testId ? null : current
       })
     } catch (error) {
-      console.error('[decky-virtual-surround-rooms:PluginConfigView] Sound test failed:', error)
+      console.error('[deck-surround-rooms:PluginConfigView] Sound test failed:', error)
       setRunningTest(null)
       setMessage('Sound test failed.')
     }
@@ -90,7 +90,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
       await setMixerProfileInBackend(defaultMixerProfile)
       setMessage(ok ? 'Plugin reset.' : 'Reset finished with errors.')
     } catch (error) {
-      console.error('[decky-virtual-surround-rooms:PluginConfigView] Reset failed:', error)
+      console.error('[deck-surround-rooms:PluginConfigView] Reset failed:', error)
       setMessage('Reset failed.')
     } finally {
       setIsResetting(false)
@@ -100,7 +100,7 @@ const PluginConfigView: React.FC<PluginConfigViewProps> = ({ onGoBack }) => {
   const confirmResetPlugin = () => {
     showModal(
       <ConfirmModal
-        strTitle="Reset Virtual Surround + Rooms?"
+        strTitle="Reset DeckSurroundRooms?"
         strDescription="All settings, mixer and per-game profiles go back to their defaults. Audio drops out for a moment."
         strOKButtonText="Reset"
         bDestructiveWarning={true}

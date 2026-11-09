@@ -19,7 +19,7 @@ const HeadphoneEq: React.FC = () => {
   useEffect(() => {
     // Polled: the EQ pauses by itself when no headphones are connected, or when another output is chosen in Steam.
     const load = () => call<[], EqState>('get_eq_state').then(setState).catch((error) => {
-      console.error('[decky-virtual-surround-rooms:HeadphoneEq] Error loading EQ state:', error)
+      console.error('[deck-surround-rooms:HeadphoneEq] Error loading EQ state:', error)
     })
     load()
     const timer = setInterval(load, 3000)
@@ -50,7 +50,7 @@ const HeadphoneEq: React.FC = () => {
       }
     } catch (error) {
       // The picker throws when it is closed without choosing a file.
-      console.log('[decky-virtual-surround-rooms:HeadphoneEq] Import cancelled or failed:', error)
+      console.log('[deck-surround-rooms:HeadphoneEq] Import cancelled or failed:', error)
     } finally {
       setBusy(false)
     }
@@ -61,7 +61,7 @@ const HeadphoneEq: React.FC = () => {
     try {
       setState(await fn())
     } catch (error) {
-      console.error('[decky-virtual-surround-rooms:HeadphoneEq] Error:', error)
+      console.error('[deck-surround-rooms:HeadphoneEq] Error:', error)
     } finally {
       setBusy(false)
     }

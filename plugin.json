@@ -1,5 +1,5 @@
 {
-  "name": "Virtual Surround + Rooms",
+  "name": "DeckSurroundRooms",
   "author": "lumen-tools (based on Josh.5)",
   "flags": [],
   "api_version": 1,
@@ -14,6 +14,6 @@
       "spatializer"
     ],
     "description": "Virtual 7.1 surround for headphones with room simulation, using room presets measured in real studios and rooms.",
-    "image": "https://raw.githubusercontent.com/lumen-tools/Decky-Virtual-Surround-Rooms/master/assets/screenshot_1.jpg"
+    "image": "https://raw.githubusercontent.com/lumen-tools/Deck-Surround-Rooms/master/assets/screenshot_1.jpg"
   }
 }

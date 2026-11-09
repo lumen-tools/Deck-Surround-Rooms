@@ -34,7 +34,7 @@ const ChannelMeter: React.FC = () => {
         const result = await call<[], number[]>('get_channel_levels')
         if (active && Array.isArray(result)) setLevels(result)
       } catch (error) {
-        console.error('[decky-virtual-surround-rooms:ChannelMeter] Error reading levels:', error)
+        console.error('[deck-surround-rooms:ChannelMeter] Error reading levels:', error)
       } finally {
         busyRef.current = false
       }

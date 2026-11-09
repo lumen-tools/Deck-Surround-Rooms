@@ -3,7 +3,7 @@ import { Router } from '@decky/ui'
 import { call } from '@decky/api'
 
 // Links shown in the settings page
-export const FORK_REPO_URL = 'https://github.com/lumen-tools/Decky-Virtual-Surround-Rooms'
+export const FORK_REPO_URL = 'https://github.com/lumen-tools/Deck-Surround-Rooms'
 export const ORIGINAL_REPO_URL = 'https://github.com/DeckSettings/decky-virtual-surround-sound'
 
 export const restartSteamClient = (): void => {
@@ -95,6 +95,24 @@ export const generateUniqueId = (): string => {
 }
 
 const pluginSettingsKey = __PLUGIN_NAME__
+// Keys used before the plugin was renamed to DeckSurroundRooms. Their settings are taken over once.
+const legacyPluginSettingsKeys = ['decky-virtual-surround-rooms']
+
+const migrateLegacyPluginConfig = (): void => {
+  try {
+    if (window.localStorage.getItem(pluginSettingsKey) !== null) return
+    for (const legacyKey of legacyPluginSettingsKeys) {
+      const legacyJson = window.localStorage.getItem(legacyKey)
+      if (legacyJson !== null) {
+        window.localStorage.setItem(pluginSettingsKey, legacyJson)
+        window.localStorage.removeItem(legacyKey)
+        return
+      }
+    }
+  } catch (error) {
+    console.error('[deck-surround-rooms:constants] Failed to migrate legacy plugin config:', error)
+  }
+}
 
 export const getPluginConfig = (): PluginConfig => {
   const defaultConfig: PluginConfig = {
@@ -105,6 +123,7 @@ export const getPluginConfig = (): PluginConfig => {
       default: defaultMixerProfile,
     },
   }
+  migrateLegacyPluginConfig()
   const dataJson = window.localStorage.getItem(pluginSettingsKey)
   let config: PluginConfig = defaultConfig
   if (dataJson) {
@@ -123,7 +142,7 @@ export const getPluginConfig = (): PluginConfig => {
         window.localStorage.setItem(pluginSettingsKey, JSON.stringify(config))
       }
     } catch (error) {
-      console.error('[decky-virtual-surround-rooms:constants] Failed to parse plugin config:', error)
+      console.error('[deck-surround-rooms:constants] Failed to parse plugin config:', error)
     }
   }
   // If the installation ID is not present, generate one and save it.
@@ -139,7 +158,7 @@ export const clearPluginConfig = (): void => {
   try {
     window.localStorage.removeItem(pluginSettingsKey)
   } catch (error) {
-    console.error('[decky-virtual-surround-rooms:constants] Failed to clear plugin config:', error)
+    console.error('[deck-surround-rooms:constants] Failed to clear plugin config:', error)
   }
 }
 
@@ -150,7 +169,7 @@ export const setPluginConfig = (updates: Partial<PluginConfig>): void => {
   try {
     window.localStorage.setItem(pluginSettingsKey, JSON.stringify(newConfig))
   } catch (error) {
-    console.error('[decky-virtual-surround-rooms:constants] Failed to save plugin config:', error)
+    console.error('[deck-surround-rooms:constants] Failed to save plugin config:', error)
   }
 }
 
