@@ -1,10 +1,10 @@
 {
   "name": "deck-surround-rooms",
   "version": "2.0.0",
-  "description": "Virtual 7.1 surround for headphones with room simulation, using room presets measured in real studios and rooms.",
+  "description": "Virtual 7.1 surround for headphones on the Steam Deck, with real room simulation and AutoEq headphone correction.",
   "type": "module",
   "engines": {
-    "node" : ">=18.0.0 <25.0.0"
+    "node": ">=18.0.0 <25.0.0"
   },
   "scripts": {
     "build": "rollup -c",
@@ -21,7 +21,10 @@
     "5.1",
     "7.1",
     "headphones",
-    "binaural"
+    "binaural",
+    "room-simulation",
+    "eq",
+    "autoeq"
   ],
   "author": "lumen-tools (based on the original by Josh.5 <jsunnex@gmail.com>)",
   "license": "BSD-3-Clause",
