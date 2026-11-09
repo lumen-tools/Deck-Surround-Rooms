@@ -4,8 +4,6 @@
 
 DeckSurroundRooms is a [Decky](https://github.com/SteamDeckHomebrew/decky-loader) plugin. It adds a virtual 7.1 audio device that games and apps play into, and renders it binaurally for your headphones, as if you were sitting in front of a real speaker setup in a studio or listening room.
 
-![DeckSurroundRooms in the Quick Access Menu](assets/screenshot_1.jpg)
-
 > **No sound after switching?** Change the volume briefly (up or down). The sound comes back immediately.
 
 ## Features
