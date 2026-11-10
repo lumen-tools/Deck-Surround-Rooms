@@ -220,8 +220,8 @@ HRIR_DISPLAY_NAMES = {
     "Room Conference - TU Ilmenau Conference Room": "Conference Room",
     "Room Lecture Hall - TU Berlin Auditorium 3": "Lecture Hall",
     # Anechoic HRIRs (no room), SADIE II database: see defaults/hrir-audio/LICENSE-SADIE.txt.
-    "No Room - Neumann KU100 (SADIE II D01)": "No Room · KU100",
-    "No Room - KEMAR (SADIE II D02)": "No Room · KEMAR",
+    "No Room - Neumann KU100 (SADIE II D01)": "Dry · Neumann KU100 (Dummy Head)",
+    "No Room - KEMAR (SADIE II D02)": "Dry · KEMAR (Dummy Head)",
 }
 
 

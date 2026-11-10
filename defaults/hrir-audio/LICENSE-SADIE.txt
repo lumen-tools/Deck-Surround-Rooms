@@ -1,4 +1,4 @@
-The "No Room" presets (Neumann KU100 and KEMAR) are HRIRs from the SADIE II database,
+The "Dry" presets (Neumann KU100 and KEMAR) are HRIRs from the SADIE II database,
 University of York (C. Armstrong, L. Thresh, D. Murphy, G. Kearney, 2018),
 https://www.york.ac.uk/sadie-project/database.html
 converted to the HeSuVi 7.1 layout. They are licensed under the Apache License 2.0:
