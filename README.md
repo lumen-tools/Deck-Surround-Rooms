@@ -98,10 +98,16 @@ No profiles are bundled. Searching needs an internet connection once; the chosen
 SteamOS uses PipeWire for audio and WirePlumber as its session manager. DeckSurroundRooms installs a user-level systemd service that runs `service.sh`. The script loads three PipeWire nodes at runtime, without restarting PipeWire or WirePlumber (which tends to upset Steam):
 
 1. **DeckSurroundRooms** – a 7.1 device that games and apps play into. When surround is on, it becomes the default output and running apps are moved onto it.
-2. **Room filter** – a `module-filter-chain` that convolves each of the 7 speaker channels with the room's impulse responses for both ears, feeds the low-pass-filtered LFE channel directly to both ears and then applies the headphone EQ.
+2. **Room filter** – a `module-filter-chain` that convolves each of the 7 speaker channels with the room's impulse responses for both ears, feeds the low-pass-filtered LFE channel directly to both ears and then applies the headphone EQ and a limiter (see [Clipping protection](#clipping-protection)).
 3. **Headphone EQ** – a stereo sink with only the headphone EQ, used when surround is off and the EQ is on.
 
 The selected room is normalised (equal loudness for every speaker, symmetric left and right) and written to `~/.config/pipewire/hrir.wav`, so switching rooms does not change the volume. The volume of the DeckSurroundRooms device is mirrored onto the real output device, so the Steam volume slider keeps working and the volume is not applied twice.
+
+## Clipping protection
+
+In surround mode, up to eight channels are added up for each ear. Loud surround mixes (explosions, gunfire, bass on all channels) can add up to more than 0 dBFS, which the output would clip hard. The surround chain therefore leaves 6 dB of headroom and ends with the *Fast Lookahead Limiter* from Steve Harris' [swh LADSPA plugins](https://github.com/swh/ladspa) (GPL-2.0). It holds the output at -1 dBFS and adds 5 ms of latency. Normal game audio stays below the limit and is not changed.
+
+The limiter is bundled in `defaults/ladspa` together with its source and licence. If PipeWire can't load it, the surround chain runs without limiter. The headphone EQ without surround has no limiter, since nothing is added up there and the AutoEq profiles already lower the level by their preamp.
 
 ## Credits
 
@@ -138,4 +144,4 @@ Pushing to `master` builds the plugin and, if the version in `package.json` has 
 
 ## Licence
 
-The plugin code is licensed under [BSD-3-Clause](LICENSE). The room and dry presets have their own licences, see [Room presets](#room-presets).
+The plugin code is licensed under [BSD-3-Clause](LICENSE). The room and dry presets have their own licences, see [Room presets](#room-presets). The bundled limiter is licensed under GPL-2.0, see [`defaults/ladspa/README.txt`](defaults/ladspa/README.txt).

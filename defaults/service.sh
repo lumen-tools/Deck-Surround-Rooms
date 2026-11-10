@@ -24,10 +24,19 @@ _handle_signal() {
     exit 1
 }
 
-# Per-input gain of the final L/R mixers (linear). 0.5 == -6dB.
+# Per-input gain of the final L/R mixers (linear). 0.2506 == -12dB: -6dB for summing 8 channels per
+# ear plus 6dB of headroom, so loud surround mixes don't drive the limiter below all the time.
 # NOTE: PipeWire filter-chain links do NOT support a "gain" key (it is ignored with an
 # "unexpected link key" error), so the gain has to be set as a control on the mixer nodes.
-mix_gain="0.5"
+mix_gain="0.2506"
+# Limiter at the end of the surround chain (after the headphone EQ): "Fast Lookahead Limiter" from the
+# swh LADSPA plugins by Steve Harris (GPL-2.0, see ladspa/README.txt). It keeps the output from
+# clipping when the binaural mix of all channels peaks above 0 dBFS. It adds 5 ms of latency.
+# Without the plugin file (or if PipeWire can't load it), the chain is built without limiter.
+limiter_plugin="${real_script_directory:?}/ladspa/fast_lookahead_limiter_1913.so"
+limiter_limit_db="-1.0"
+limiter_release_s="0.1"
+use_limiter="true"
 # Low-pass cut-off for the LFE channel. LFE is non-directional, so it is low-passed and fed
 # to both ears directly instead of being convolved with the centre HRIR.
 lfe_cutoff_hz="120"
@@ -204,6 +213,29 @@ EOF
     )
 }
 
+limiter_enabled() {
+    [[ "${use_limiter}" == "true" && -r "${limiter_plugin}" ]]
+}
+
+limiter_graph_nodes() {
+    limiter_enabled || return 0
+    printf ',\n            { "type": "ladspa", "name": "limiter", "plugin": "%s", "label": "fastLookaheadLimiter", "control": { "Input gain (dB)": 0.0, "Limit (dB)": %s, "Release time (s)": %s } }' \
+        "${limiter_plugin}" "${limiter_limit_db}" "${limiter_release_s}"
+}
+
+limiter_graph_links() {
+    limiter_enabled || return 0
+    printf ',\n            { "output": "eqL_hs2:Out", "input": "limiter:Input 1" },\n            { "output": "eqR_hs2:Out", "input": "limiter:Input 2" }'
+}
+
+limiter_graph_outputs() {
+    if limiter_enabled; then
+        echo '"limiter:Output 1", "limiter:Output 2"'
+    else
+        echo '"eqL_hs2:Out", "eqR_hs2:Out"'
+    fi
+}
+
 build_filter_module_convolver_args_8() {
 filter_module_convolver_args_8=$(
     cat <<EOF
@@ -238,7 +270,7 @@ filter_module_convolver_args_8=$(
             { "type": "builtin", "label": "convolver", "name": "convFC_R", "config": { "filename": "${HOME:?}/.config/pipewire/hrir.wav", "channel": 13 } },
             { "type": "builtin", "label": "bq_lowpass", "name": "lpLFE", "control": { "Freq": ${lfe_cutoff_hz:?}, "Q": 0.707 } },
             { "type": "builtin", "label": "mixer", "name": "mixL", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } },
-            { "type": "builtin", "label": "mixer", "name": "mixR", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } }$(eq_graph_nodes)
+            { "type": "builtin", "label": "mixer", "name": "mixR", "control": { "Gain 1": ${mix_gain:?}, "Gain 2": ${mix_gain:?}, "Gain 3": ${mix_gain:?}, "Gain 4": ${mix_gain:?}, "Gain 5": ${mix_gain:?}, "Gain 6": ${mix_gain:?}, "Gain 7": ${mix_gain:?}, "Gain 8": ${mix_gain:?} } }$(eq_graph_nodes)$(limiter_graph_nodes)
         ],
         "links": [
             { "output": "copyFL:Out", "input": "convFL_L:In" },
@@ -271,10 +303,10 @@ filter_module_convolver_args_8=$(
             { "output": "convRR_R:Out", "input": "mixR:In 7" },
             { "output": "convRR_L:Out", "input": "mixL:In 7" },
             { "output": "lpLFE:Out", "input": "mixR:In 8" },
-            { "output": "lpLFE:Out", "input": "mixL:In 8" }$(eq_graph_links)
+            { "output": "lpLFE:Out", "input": "mixL:In 8" }$(eq_graph_links)$(limiter_graph_links)
         ],
         "inputs":  [ "copyFL:In", "copyFR:In", "copyFC:In", "copyLFE:In", "copyRL:In", "copyRR:In", "copySL:In", "copySR:In" ],
-        "outputs": [ "eqL_hs2:Out", "eqR_hs2:Out" ]
+        "outputs": [ $(limiter_graph_outputs) ]
     },
     capture.props = {
         "node.name": "${virtual_surround_filter_sink_capture_node_name:?}",
@@ -605,6 +637,14 @@ create_virtual_surround_module() {
     sleep 1 # <- sleep for a second to ensure everything is loaded before linking
 
     if ! wait_for_sink_registration "${virtual_surround_filter_sink_capture_node_name:?}" 40 0.25; then
+        if [[ "${filter_type}" == "convolver" ]] && limiter_enabled; then
+            # PipeWire couldn't load the chain with the limiter (e.g. no LADSPA support): build it without.
+            echo "WARNING! Unable to load the filter chain with the limiter. Retrying without limiter."
+            cleanup_virtual_surround_module
+            use_limiter="false"
+            create_virtual_surround_module "${filter_type}"
+            return $?
+        fi
         echo "ERROR! Unable to detect sink '${virtual_surround_filter_sink_capture_node_name:?}' after loading module."
         cleanup_virtual_surround_module
         return 1

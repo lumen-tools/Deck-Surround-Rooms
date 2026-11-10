@@ -190,7 +190,7 @@ hrir_original_backup_path = os.path.join(pipewire_config_path, "hrir-original.wa
 
 # Bump this whenever the filter graph in service.sh changes so that an already running
 # systemd service gets restarted after a plugin update (otherwise the old graph keeps running).
-SERVICE_GRAPH_VERSION = 8
+SERVICE_GRAPH_VERSION = 9
 # Bump this whenever the HRIR preparation (normalisation) changes.
 HRIR_PREPARE_VERSION = 1
 
