@@ -10,7 +10,7 @@ DeckSurroundRooms is a fork of [Virtual Surround Sound](https://github.com/DeckS
 
 ## Features
 
-- **Real rooms instead of a dry virtualiser:** Eight binaural room impulse responses (BRIRs) measured with dummy heads in real rooms, from broadcast studios to a lecture hall. The room's reflections and reverb put the sound outside your head and give it a natural distance.
+- **Real rooms instead of a dry virtualiser:** Eight binaural room impulse responses (BRIRs) measured with dummy heads in real rooms, from broadcast studios to a lecture hall. The room's reflections and reverb put the sound outside your head and give it a natural distance. Two dry presets without room are included as well.
 - **One switch:** Turns surround on or off for all games and apps at once.
 - **Headphone EQ:** Corrects your headphones to a neutral (Harman) response with a profile from [AutoEq](https://github.com/jaakkopasanen/AutoEq). It also works with surround switched off.
 - **Output selection:** Choose which headphones or output device the processed sound goes to.
@@ -40,7 +40,7 @@ Open the Quick Access Menu (**…** button) and select DeckSurroundRooms.
 | --- | --- |
 | **Virtual Surround** | Turns surround on or off for everything. It is only available while headphones or another external output are connected. Switching in the middle of a game can mute its audio until the game is restarted. |
 | **Output** | The device the processed sound is played on. |
-| **Room** | The room preset (see [Room presets](#room-presets)). |
+| **Room** | The room preset, or a dry preset without room (see [Room presets](#room-presets)). |
 | **Channels** | Live activity of the 8 input channels. |
 | **Headphone EQ** | Search AutoEq for your headphones, or import a profile file. Saved headphones can be switched with one tap. |
 | **Mixer** | Level of each speaker (0–150 %). With **Per-game profile** on, the running game gets its own settings. |
@@ -65,6 +65,17 @@ Each preset is a binaural room impulse response of a real room, taken from the [
 
 Small Studio is the default. Smaller, drier rooms sound more precise; larger rooms sound more spacious but less direct.
 
+### Dry presets
+
+For a direct sound without any room, two anechoic HRIRs (head-related impulse responses measured without room reflections) are included. Both are from the [SADIE II database](https://www.york.ac.uk/sadie-project/database.html) of the University of York and use the same dummy heads as most of the rooms:
+
+| Preset | Dummy head | Source | Licence |
+| --- | --- | --- | --- |
+| Dry · Neumann KU100 (Dummy Head) | Neumann KU100 | SADIE II, D01 | Apache 2.0 |
+| Dry · KEMAR (Dummy Head) | KEMAR | SADIE II, D02 | Apache 2.0 |
+
+C. Armstrong, L. Thresh, D. Murphy and G. Kearney, "A Perceptual Evaluation of Individual and Non-Individual HRTFs: A Case Study of the SADIE II Database", Applied Sciences, 2018. The licence text is in [`defaults/hrir-audio/LICENSE-SADIE.txt`](defaults/hrir-audio/LICENSE-SADIE.txt).
+
 1. P. Stade, B. Bernschütz and M. Rühl, "A Spatial Audio Impulse Response Compilation Captured at the WDR Broadcast Studios", 27th Tonmeistertagung – VDT International Convention, Cologne, 2012. <http://audiogroup.web.th-koeln.de/wdr_irc.html>
 2. S. Werner, M. Voigt and F. Klein, "Dataset of measured binaural room impulse responses for use in an position-dynamic auditory augmented reality application", Zenodo, 2018. <https://zenodo.org/record/1321996>
 3. F. Melchior, D. Marston, C. Pike, D. Satongar and Y. Lam, "The Salford BBC Spatially-sampled Binaural Room Impulse Response dataset", University of Salford, 2014. <http://usir.salford.ac.uk/id/eprint/30868>
@@ -72,7 +83,7 @@ Small Studio is the default. Smaller, drier rooms sound more precise; larger roo
 5. A. Neidhardt, "Binaural room impulse responses: Same listener-source-setup at different positions in the room", Zenodo, 2016. <https://doi.org/10.5281/zenodo.163617>
 6. H. Wierstorf and M. Geier, "Binaural room impulse responses recorded with KEMAR in a mid-size lecture hall", Zenodo, 2016. <https://doi.org/10.5281/zenodo.160749>
 
-The converted files in `defaults/hrir-audio` are distributed under CC BY-NC-SA 4.0 (see [`defaults/hrir-audio/LICENSE.txt`](defaults/hrir-audio/LICENSE.txt)) and must not be used commercially. The BSD-3-Clause licence of the plugin code does not apply to these files.
+The converted room files in `defaults/hrir-audio` are distributed under CC BY-NC-SA 4.0 (see [`defaults/hrir-audio/LICENSE.txt`](defaults/hrir-audio/LICENSE.txt)) and must not be used commercially. The BSD-3-Clause licence of the plugin code does not apply to these files.
 
 ## Headphone EQ
 
@@ -127,4 +138,4 @@ Pushing to `master` builds the plugin and, if the version in `package.json` has 
 
 ## Licence
 
-The plugin code is licensed under [BSD-3-Clause](LICENSE). The room presets have their own licence, see [Room presets](#room-presets).
+The plugin code is licensed under [BSD-3-Clause](LICENSE). The room and dry presets have their own licences, see [Room presets](#room-presets).

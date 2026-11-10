@@ -219,6 +219,9 @@ HRIR_DISPLAY_NAMES = {
     "Room Audio Lab - University of Rostock Audio Lab": "Audio Lab",
     "Room Conference - TU Ilmenau Conference Room": "Conference Room",
     "Room Lecture Hall - TU Berlin Auditorium 3": "Lecture Hall",
+    # Anechoic HRIRs (no room), SADIE II database: see defaults/hrir-audio/LICENSE-SADIE.txt.
+    "No Room - Neumann KU100 (SADIE II D01)": "No Room · KU100",
+    "No Room - KEMAR (SADIE II D02)": "No Room · KEMAR",
 }
 
 
