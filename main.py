@@ -1062,6 +1062,18 @@ class Plugin:
         await service_script_exec("install", ["--restart-after-install"] if restart else [])
         settings.setSetting("service_graph_version", SERVICE_GRAPH_VERSION)
         settings.setSetting("service_installed_for", installed_for)
+        if restart:
+            # After the restart, load the room that is selected in the UI once more, so what plays always
+            # matches the dropdown (after an update the previous service could have run an older room).
+            asyncio.get_event_loop().create_task(self._reapply_selected_room())
+
+    async def _reapply_selected_room(self):
+        if not await self._wait_for_surround_sinks(timeout=30.0):
+            return
+        source_path = settings.getSetting("hrir_source_path", None) or os.path.join(hrir_directory, default_hrir_file)
+        if os.path.exists(source_path):
+            decky.logger.info("Re-applying the selected room after the service restart: %s", source_path)
+            await self.set_hrir_file(source_path)
 
     @staticmethod
     def _find_hrir_source_for_installed_file() -> str:
