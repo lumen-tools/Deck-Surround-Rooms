@@ -309,6 +309,15 @@ def eq_slot_values(profile: dict | None) -> tuple[float, dict[str, tuple[float, 
         values[slots.pop(0)] = (f["fc"], max(f["q"], 0.05), f["gain"])
     return 10 ** (profile.get("preamp", 0.0) / 20), values
 
+def plugin_version() -> str:
+    """Version of this plugin build (package.json next to main.py)."""
+    try:
+        with open(os.path.join(script_directory, "package.json"), "r", encoding="utf-8") as f:
+            return str(json.load(f).get("version") or "unknown")
+    except Exception:
+        return "unknown"
+
+
 class UnsupportedHrirError(Exception):
     pass
 
@@ -1042,10 +1051,17 @@ class Plugin:
             self._install_hrir(source_path)
         with contextlib.suppress(Exception):
             self._write_eq_file()
-        restart = settings.getSetting("service_graph_version", 0) != SERVICE_GRAPH_VERSION
-        decky.logger.info("Installing service (restart=%s)", restart)
+        # Restart the audio service whenever the plugin itself changed (update, renamed plugin directory), not
+        # only when the filter graph changed. Otherwise the service of the previous version keeps running
+        # with its old code - after the rename even from the old, deleted plugin directory - and switching
+        # between headphones and speakers got stuck until the Steam Deck was restarted.
+        installed_for = f"{plugin_version()}@{script_directory}"
+        restart = (settings.getSetting("service_graph_version", 0) != SERVICE_GRAPH_VERSION
+                   or settings.getSetting("service_installed_for", None) != installed_for)
+        decky.logger.info("Installing service (restart=%s, plugin %s)", restart, installed_for)
         await service_script_exec("install", ["--restart-after-install"] if restart else [])
         settings.setSetting("service_graph_version", SERVICE_GRAPH_VERSION)
+        settings.setSetting("service_installed_for", installed_for)
 
     @staticmethod
     def _find_hrir_source_for_installed_file() -> str:
@@ -1567,6 +1583,7 @@ class Plugin:
             ok = False
         await service_script_exec("install", ["--restart-after-install"])
         settings.setSetting("service_graph_version", SERVICE_GRAPH_VERSION)
+        settings.setSetting("service_installed_for", f"{plugin_version()}@{script_directory}")
         # Give the service a moment to re-create the sinks, then re-apply the app routing.
         filter_name, _ = await get_virtual_surround_sink_names()
         for _ in range(20):
