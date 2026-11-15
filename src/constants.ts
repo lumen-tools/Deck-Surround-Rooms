@@ -245,6 +245,12 @@ export const getCurrentMixerProfile = async (): Promise<MixerProfile> => {
 }
 
 export const setMixerProfileInBackend = async (mixerProfile: MixerProfile): Promise<void> => {
-  // Set this 'mixerProfile' in the backend by sending the whole profile volume list
-  await call<[MixerProfile], boolean>('set_mixer_profile', mixerProfile)
+  // The backend applies the volumes to the audio streams of the apps: with a per-game profile only to
+  // the streams of the running game (found by its Steam app ID), otherwise to all apps except Steam.
+  const runningApp = Router.MainRunningApp as { appid?: number | string } | undefined
+  await call<[MixerProfile & { per_game: boolean; app_id: number | null }], boolean>('set_mixer_profile', {
+    ...mixerProfile,
+    per_game: !!mixerProfile.name && mixerProfile.name !== 'default',
+    app_id: runningApp?.appid != null ? Number(runningApp.appid) : null,
+  })
 }

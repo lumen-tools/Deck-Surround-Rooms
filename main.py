@@ -589,6 +589,8 @@ class Plugin:
         self.stop_event.set()
         with contextlib.suppress(Exception):
             await self._stop_channel_meter()
+        with contextlib.suppress(Exception):
+            await self._reset_mixer_streams()
         monitor = getattr(self, "_vss_monitor_task", None)
         if monitor:
             monitor.cancel()
@@ -977,6 +979,12 @@ class Plugin:
                     if not line:
                         break
                     text = line.decode(errors="ignore")
+                    if "'new' on sink-input" in text or "'remove' on sink-input" in text:
+                        # An app opened or closed a stream: apply the mixer to it right away.
+                        if self._last_mixer_profile:
+                            with contextlib.suppress(Exception):
+                                await self._apply_mixer()
+                        continue
                     if " on sink " not in text and " on server" not in text:
                         continue
                     # Collapse bursts of events (e.g. while dragging the volume slider) into one sync.
@@ -1263,7 +1271,12 @@ class Plugin:
         self._applied_mode = None
         # Right after installing/updating the plugin the surround service is still starting; the routing
         # waits for it instead of giving up, otherwise the switch is "on" but nothing is routed yet.
-        return await self._apply_routing()
+        result = await self._apply_routing()
+        # The mixer only applies in surround: set or reset the app volumes for the new mode right away.
+        if self._last_mixer_profile:
+            with contextlib.suppress(Exception):
+                await self._apply_mixer()
+        return result
 
     async def _surround_sinks_ready(self) -> bool:
         filter_name, device_name = await get_virtual_surround_sink_names()
@@ -2710,99 +2723,232 @@ class Plugin:
             decky.logger.error(f"Error moving sink input: {e}")
             return False
 
+    # ---- Mixer -------------------------------------------------------------------------------------------
+    #
+    # The mixer used to set per-channel volumes on the room filter sink, i.e. on everything that plays in
+    # surround, Steam's interface sounds included. It now sets them on the audio streams of the apps
+    # instead: with a per-game profile only on the streams of the running game, otherwise on every app
+    # except Steam itself. Levels above 100 % are caught by the limiter at the end of the chain.
+    #
+    # The game's streams are found through the process behind each stream: Steam starts every game with
+    # its app ID in the environment (SteamAppId / SteamGameId). Games running in the Steam Linux Runtime
+    # container report their process ID inside the container, so it is matched against both the host
+    # and the container process IDs (NSpid in /proc/<pid>/status).
+
+    MIXER_CHANNEL_CODES = {
+        "front-left": "FL", "front-right": "FR", "front-center": "FC", "lfe": "LFE",
+        "rear-left": "RL", "rear-right": "RR", "side-left": "SL", "side-right": "SR",
+    }
+    STEAM_CLIENT_BINARIES = {"steam", "steamwebhelper", "steam.sh"}
+
+    @staticmethod
+    def _steam_ids_of_pid(host_pid: int) -> set[int]:
+        """Steam app IDs in the environment of a process (empty if none or not readable)."""
+        try:
+            with open(f"/proc/{host_pid}/environ", "rb") as f:
+                raw = f.read()
+        except OSError:
+            return set()
+        ids = set()
+        for item in raw.split(b"\0"):
+            key, _, value = item.partition(b"=")
+            if key not in (b"SteamAppId", b"SteamGameId", b"STEAM_COMPAT_APP_ID"):
+                continue
+            try:
+                number = int(value)
+            except ValueError:
+                continue
+            if number <= 0:
+                continue
+            ids.add(number)
+            if number > 0xFFFFFFFF:
+                ids.add(number >> 32)  # non-Steam shortcut: 64-bit game ID with the app ID in the upper half
+        return ids
+
+    @staticmethod
+    def _host_pids_for(stream_pid: int) -> list[int]:
+        """Host processes that may be the stream's process: the PID itself, or a process with that PID
+        inside a PID namespace (e.g. the Steam Linux Runtime container)."""
+        pids = []
+        try:
+            entries = os.listdir("/proc")
+        except OSError:
+            return pids
+        for entry in entries:
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/status", "r", encoding="utf-8", errors="ignore") as f:
+                    nspid = next((line.split()[1:] for line in f if line.startswith("NSpid:")), None)
+            except OSError:
+                continue
+            if not nspid:
+                continue
+            if (len(nspid) == 1 and nspid[0] == str(stream_pid)) or (len(nspid) > 1 and nspid[-1] == str(stream_pid)):
+                pids.append(int(entry))
+        return pids
+
+    def _stream_steam_ids(self, index: int, props: dict) -> set[int]:
+        cache = self.__dict__.setdefault("_mixer_stream_ids", {})
+        pid = self._parse_int(props.get("application.process.id"), -1)
+        key = (index, pid)
+        if key in cache:
+            return cache[key]
+        ids: set[int] = set()
+        if pid > 0:
+            for host_pid in self._host_pids_for(pid):
+                ids |= self._steam_ids_of_pid(host_pid)
+        cache[key] = ids
+        if len(cache) > 256:
+            cache.clear()
+        decky.logger.info("Mixer: stream %s '%s' (%s, pid %s) has Steam app IDs %s", index,
+                          props.get("application.name"), props.get("application.process.binary"), pid,
+                          sorted(ids) or "none")
+        return ids
+
+    def _is_steam_client_stream(self, props: dict) -> bool:
+        binary = str(props.get("application.process.binary", "")).lower()
+        name = str(props.get("application.name", "")).lower()
+        return binary in self.STEAM_CLIENT_BINARIES or name in ("steam", "steamwebhelper")
+
+    async def _pactl_json(self, *args) -> list:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "pactl", "-f", "json", *args, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, env=subprocess_exec_env())
+            stdout, _ = await process.communicate()
+            if process.returncode != 0:
+                return []
+            return json.loads(stdout.decode("utf-8", errors="replace")) or []
+        except Exception as e:
+            decky.logger.warning("pactl %s failed: %s", " ".join(args), e)
+            return []
+
+    async def _pactl(self, *args) -> bool:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "pactl", *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                env=subprocess_exec_env())
+            _, stderr = await process.communicate()
+            if process.returncode != 0:
+                decky.logger.warning("pactl %s failed: %s", " ".join(args), stderr.decode().strip())
+                return False
+            return True
+        except Exception as e:
+            decky.logger.warning("pactl %s failed: %s", " ".join(args), e)
+            return False
+
+    @staticmethod
+    def _volume_percents(entry: dict) -> list[int]:
+        volume = entry.get("volume") or {}
+        values = []
+        for channel in entry.get("channel_map", "").split(","):
+            item = volume.get(channel) or {}
+            try:
+                values.append(int(str(item.get("value_percent", "100%")).rstrip("%")))
+            except ValueError:
+                values.append(100)
+        return values
+
     async def set_mixer_profile(self, mixer_profile):
         """
-        Sets per-channel volumes on the sink named "virtual-surround-sound"
-        using the provided mixer_profile dict.
-
-        The mixer_profile is expected to be a dict like:
+        Stores the mixer profile from the frontend and applies it. Expected:
           {
-            "name": "default",
-            "usePerAppProfile": false,
-            "volumes": {
-              "FL": 100,
-              "FR": 100,
-              "FC": 100,
-              "LFE": 100,
-              "RL": 100,
-              "RR": 100,
-              "SL": 100,
-              "SR": 100
-            }
+            "name": "default" or the game's name,
+            "volumes": {"FL": 100, "FR": 100, "FC": 100, "LFE": 100, "RL": 100, "RR": 100, "SL": 100, "SR": 100},
+            "per_game": true while a per-game profile is active,
+            "app_id": Steam app ID of the running game (or null)
           }
         """
         self._last_mixer_profile = mixer_profile
-        filter_name, _ = await get_virtual_surround_sink_names()
-        if not filter_name:
-            decky.logger.error("Unable to resolve virtual surround filter sink name")
-            return False
-        sinks = await self.list_sinks()
-        target_sink = None
-        for sink in sinks:
-            # Look for the sink named "input.virtual-surround-sound"
-            if sink.get("name") == filter_name:
-                target_sink = sink
-                break
-        if target_sink is None:
-            decky.logger.error("Sink 'virtual-surround-sound' not found")
-            return False
+        return await self._apply_mixer()
 
-        sink_index = self._sink_index_from_entry(target_sink)
-        if sink_index is None:
-            decky.logger.error("Sink 'virtual-surround-sound' missing sink index")
-            return False
+    async def _apply_mixer(self) -> bool:
+        lock = self.__dict__.setdefault("_mixer_lock", asyncio.Lock())
+        async with lock:
+            return await self._apply_mixer_locked()
 
-        channel_map = self._channel_map_from_sink(target_sink)
-        if not channel_map:
-            decky.logger.error("Channel Map not found for sink 'virtual-surround-sound'")
-            return False
+    async def _apply_mixer_locked(self) -> bool:
+        profile = self._last_mixer_profile or {}
+        volumes = profile.get("volumes") or {}
+        per_game = bool(profile.get("per_game"))
+        app_id = self._parse_int(profile.get("app_id"), 0)
+        touched: dict[int, list[int]] = self.__dict__.setdefault("_mixer_touched", {})
 
-        # Map full channel names to short codes used in mixer_profile.
-        # The pactl command will return the channels as "front-left" and "front-right".
-        channel_name_map = {
-            "front-left": "FL",
-            "front-right": "FR",
-            "front-center": "FC",
-            "lfe": "LFE",
-            "rear-left": "RL",
-            "rear-right": "RR",
-            "side-left": "SL",
-            "side-right": "SR"
-        }
-        # Since we need to map the volume args in the correct order, we will map them based on the sink channel_map,
-        # then read each channel volume provided in the mixer_profile in the correct order.
-        volume_args = []
-        for ch in channel_map:
-            short_code = channel_name_map.get(ch)
-            if short_code and short_code in mixer_profile.get("volumes", {}):
-                volume_value = mixer_profile["volumes"][short_code]
-                # Build a per-channel volume argument (e.g. "100%")
-                volume_args.append(f"{volume_value}%")
+        filter_name, device_name = await get_virtual_surround_sink_names()
+        sinks = await self.list_sinks() or []
+        device_sink = next((s for s in sinks if s.get("name") == device_name), None)
+        device_index = self._sink_index_from_entry(device_sink)
+
+        # Older versions set the mixer on the room filter sink. Keep it neutral (also after a filter reload).
+        filter_sink = next((s for s in sinks if s.get("name") == filter_name), None)
+        filter_index = self._sink_index_from_entry(filter_sink)
+        if filter_sink is not None and filter_index is not None and any(v != 100 for v in self._volume_percents(filter_sink)):
+            await self._pactl("set-sink-volume", str(filter_index), "100%")
+
+        inputs = await self._pactl_json("list", "sink-inputs")
+        surround = await self._routing_mode() == "surround"
+        candidates = []
+        for entry in inputs:
+            index = self._parse_int(entry.get("index"), -1)
+            props = entry.get("properties") or {}
+            # Apps play into the surround device (some directly into the room filter).
+            if index < 0 or self._parse_int(entry.get("sink"), -1) not in {i for i in (device_index, filter_index) if i is not None}:
+                continue
+            if str(props.get("node.name", "")).startswith(("output.vss", "output.virtual-surround")):
+                continue
+            if self._is_steam_client_stream(props):
+                continue
+            candidates.append((index, entry, props))
+
+        targets = candidates if surround else []
+        if surround and per_game and app_id:
+            game_streams = [c for c in candidates if app_id in self._stream_steam_ids(c[0], c[2])]
+            # If the game's streams can't be identified, fall back to all apps except Steam (as before,
+            # just without Steam's interface sounds) instead of leaving the game unchanged.
+            if game_streams:
+                targets = game_streams
+
+        existing = {self._parse_int(e.get("index"), -1): e for e in inputs}
+        ok = True
+        target_indexes = set()
+        for index, entry, _props in targets:
+            target_indexes.add(index)
+            wanted = []
+            for channel in entry.get("channel_map", "").split(","):
+                code = self.MIXER_CHANNEL_CODES.get(channel)
+                if code:
+                    wanted.append(int(volumes.get(code, 100)))
+                elif channel == "mono":
+                    wanted.append(int(round((volumes.get("FL", 100) + volumes.get("FR", 100)) / 2)))
+                else:
+                    wanted.append(100)
+            if not wanted:
+                continue
+            if self._volume_percents(entry) != wanted:
+                ok = await self._pactl("set-sink-input-volume", str(index), *[f"{v}%" for v in wanted]) and ok
+            if any(v != 100 for v in wanted):
+                touched[index] = wanted
             else:
-                volume_args.append(f"100%")
+                touched.pop(index, None)
 
-        if not volume_args:
-            decky.logger.error("No matching channels found in mixer profile for sink channel map")
-            return False
+        # Streams the mixer changed earlier but no longer applies to (game ended, per-game profile switched,
+        # surround off, moved to another output): back to 100 %, so no level stays raised.
+        for index in list(touched):
+            if index in target_indexes:
+                continue
+            touched.pop(index, None)
+            entry = existing.get(index)
+            if entry is not None and any(v != 100 for v in self._volume_percents(entry)):
+                await self._pactl("set-sink-input-volume", str(index), "100%")
+        return ok
 
-        # Execute pactl to set the per-channel volume.
-        command = ["pactl", "set-sink-volume", str(sink_index)] + volume_args
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=subprocess_exec_env()
-            )
-            stdout, stderr = await process.communicate()
-            if process.returncode != 0:
-                decky.logger.error("Failed to set mixer profile: " + stderr.decode())
-                return False
-            decky.logger.debug(f"Mixer profile applied on sink {sink_index} with volumes: {volume_args}")
-            return True
-        except Exception as e:
-            decky.logger.error(f"Error setting mixer profile: {e}")
-            return False
+    async def _reset_mixer_streams(self):
+        """Back to 100 % on every stream the mixer raised or lowered (plugin unloading)."""
+        touched = self.__dict__.get("_mixer_touched") or {}
+        for index in list(touched):
+            await self._pactl("set-sink-input-volume", str(index), "100%")
+        touched.clear()
 
     async def test_stuff(self):
         # await self._main()

@@ -177,6 +177,41 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     await setMixerProfileInBackend(mixerProfile)
   }
 
+  // The master slider moves all channel sliders by the same amount, so the balance between the channels
+  // stays and there is still only one level per channel. It stops as soon as one channel reaches 0 or 150 %.
+  const masterDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const masterValue = useMemo(() => {
+    const values = channels.map(({ code }) => mixerVolumes[code] ?? 100)
+    return values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : 100
+  }, [channels, mixerVolumes])
+
+  const handleMasterChange = (value: number) => {
+    const values = channels.map(({ code }) => mixerVolumes[code] ?? 100)
+    if (!values.length) return
+    const delta = Math.max(-Math.min(...values), Math.min(150 - Math.max(...values), value - masterValue))
+    if (delta === 0) return
+    const updatedVolumes = { ...mixerVolumes }
+    channels.forEach(({ code }) => {
+      updatedVolumes[code] = (mixerVolumes[code] ?? 100) + delta
+    })
+    setMixerVolumes(updatedVolumes)
+    // Pending single-channel changes are part of updatedVolumes already.
+    channelDebounceRef.current.forEach((entry) => clearTimeout(entry.timer))
+    channelDebounceRef.current.clear()
+    if (masterDebounceRef.current) clearTimeout(masterDebounceRef.current)
+    masterDebounceRef.current = setTimeout(async () => {
+      masterDebounceRef.current = null
+      const mixerProfile: MixerProfile = { name: profile, volumes: updatedVolumes }
+      setPluginConfig({
+        perAppProfiles: {
+          ...currentConfig?.perAppProfiles,
+          [profile]: { ...(currentConfig?.perAppProfiles?.[profile] ?? {}), ...mixerProfile },
+        },
+      })
+      await setMixerProfileInBackend(mixerProfile)
+    }, 250)
+  }
+
   const handleVolumeChange = (channel: string, value: number) => {
     const updatedVolumes = { ...mixerVolumes, [channel]: value }
     setMixerVolumes(updatedVolumes)
@@ -283,6 +318,23 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
             />
           </PanelSectionRow>
         )}
+        <PanelSectionRow>
+          <SliderField
+            min={0}
+            max={150}
+            step={5}
+            notchCount={4}
+            notchTicksVisible={false}
+            label="Master"
+            description={usePerAppProfiles ? 'Moves all channels. Only this game, not Steam.' : 'Moves all channels. All apps, not Steam.'}
+            showValue
+            valueSuffix="%"
+            resetValue={100}
+            bottomSeparator="none"
+            value={masterValue}
+            onChange={(value: number) => handleMasterChange(value)}
+          />
+        </PanelSectionRow>
         {channels.map(({ code, label }) => (
           <PanelSectionRow key={code}>
             <SliderField
