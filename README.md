@@ -15,7 +15,7 @@ DeckSurroundRooms is a fork of [Virtual Surround Sound](https://github.com/DeckS
 - **Headphone EQ:** Corrects your headphones to a neutral (Harman) response with a profile from [AutoEq](https://github.com/jaakkopasanen/AutoEq). It also works with surround switched off.
 - **Output selection:** Choose which headphones or output device the processed sound goes to.
 - **Channel activity:** Shows live which of the 8 channels carry audio, so you can see whether a game really outputs surround.
-- **Mixer:** Adjust each speaker's level, optionally with a separate profile per game.
+- **Mixer:** Make a quiet game louder or adjust each speaker's level, optionally with a separate profile per game. Steam's interface sounds stay unchanged.
 - **Sound test:** Plays each speaker in turn, with and without surround, or a single speaker on its own.
 
 ## Installation
@@ -43,7 +43,7 @@ Open the Quick Access Menu (**…** button) and select DeckSurroundRooms.
 | **Room** | The room preset, or a dry preset without room (see [Room presets](#room-presets)). |
 | **Channels** | Live activity of the 8 input channels. |
 | **Headphone EQ** | Search AutoEq for your headphones, or import a profile file. Saved headphones can be switched with one tap. |
-| **Mixer** | Level of each speaker (0–150 %). With **Per-game profile** on, the running game gets its own settings. |
+| **Mixer** | Level of each speaker (0–150 %), and a **Master** slider that moves all of them together. The mixer changes only the apps' audio, not Steam's interface sounds. With **Per-game profile** on, the running game gets its own settings and only the game is changed. Levels above 100 % are held below clipping by the limiter. |
 | **Settings** (gear icon) | Sound test, full reset and links. |
 
 Most games only output 7.1 when they detect a surround device. If **Channels** only shows activity on the front left and right channels, choose 7.1 or surround in the game's audio settings.
