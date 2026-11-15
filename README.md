@@ -105,7 +105,7 @@ The selected room is normalised (equal loudness for every speaker, symmetric lef
 
 ## Clipping protection
 
-In surround mode, up to eight channels are added up for each ear. Loud surround mixes (explosions, gunfire, bass on all channels) can add up to more than 0 dBFS, which the output would clip hard. The surround chain therefore leaves 6 dB of headroom and ends with the *Fast Lookahead Limiter* from Steve Harris' [swh LADSPA plugins](https://github.com/swh/ladspa) (GPL-2.0). It holds the output at -1 dBFS and adds 5 ms of latency. Normal game audio stays below the limit and is not changed.
+In surround mode, up to eight channels are added up for each ear. Loud surround mixes (explosions, gunfire, bass on all channels) can add up to more than 0 dBFS, which the output would clip hard. The surround chain therefore leaves 3 dB of headroom and ends with the *Fast Lookahead Limiter* from Steve Harris' [swh LADSPA plugins](https://github.com/swh/ladspa) (GPL-2.0). It holds the output at -1 dBFS and adds 5 ms of latency. Normal game audio stays below the limit and is not changed.
 
 The limiter is bundled in `defaults/ladspa` together with its source and licence. If PipeWire can't load it, the surround chain runs without limiter. The headphone EQ without surround has no limiter, since nothing is added up there and the AutoEq profiles already lower the level by their preamp.
 

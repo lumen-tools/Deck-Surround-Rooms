@@ -24,11 +24,11 @@ _handle_signal() {
     exit 1
 }
 
-# Per-input gain of the final L/R mixers (linear). 0.2506 == -12dB: -6dB for summing 8 channels per
-# ear plus 6dB of headroom, so loud surround mixes don't drive the limiter below all the time.
+# Per-input gain of the final L/R mixers (linear). 0.354 == -9dB: -6dB for summing 8 channels per
+# ear plus 3dB of headroom. Stereo games stay below the limiter; loud surround mixes reach it.
 # NOTE: PipeWire filter-chain links do NOT support a "gain" key (it is ignored with an
 # "unexpected link key" error), so the gain has to be set as a control on the mixer nodes.
-mix_gain="0.2506"
+mix_gain="0.354"
 # Limiter at the end of the surround chain (after the headphone EQ): "Fast Lookahead Limiter" from the
 # swh LADSPA plugins by Steve Harris (GPL-2.0, see ladspa/README.txt). It keeps the output from
 # clipping when the binaural mix of all channels peaks above 0 dBFS. It adds 5 ms of latency.
