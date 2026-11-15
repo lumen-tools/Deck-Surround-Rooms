@@ -48,10 +48,17 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
   // False while only the internal speakers are available (no headphones etc. connected).
   const [outputAvailable, setOutputAvailable] = useState<boolean>(true)
   const isSwitchingRef = useRef<boolean>(false)
+  // The view stays mounted (alwaysRender), so it has to notice when another game starts or the game ends.
+  const shownAppRef = useRef<string | null | undefined>(undefined)
 
   const refreshState = async () => {
     const currentRunningApp = Router.MainRunningApp
     setRunningApp(currentRunningApp ? { display_name: currentRunningApp.display_name } : null)
+    const appName = currentRunningApp?.display_name ?? null
+    if (appName !== shownAppRef.current) {
+      shownAppRef.current = appName
+      await updateMixerProfile()
+    }
     try {
       setOutputAvailable(!!(await call<[], boolean>('get_output_available')))
       const enabled = !!(await call<[], boolean>('get_surround_enabled'))
@@ -147,12 +154,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
         volumes: updatedVolumes,
       }
       // Save plugin config
-      setPluginConfig({
-        perAppProfiles: {
-          ...currentConfig?.perAppProfiles,
-          [profile]: mixerProfile,
-        },
-      })
+      setPluginConfig({ perAppProfiles: { [profile]: mixerProfile } })
       // Save send updated mixer profile to backend
       await setMixerProfileInBackend(mixerProfile)
       //await call<[MixerProfile], boolean>('set_mixer_profile', mixerProfile);
@@ -168,12 +170,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     const volumes = { ...defaultMixerVolumes }
     setMixerVolumes(volumes)
     const mixerProfile: MixerProfile = { name: profile, volumes }
-    setPluginConfig({
-      perAppProfiles: {
-        ...currentConfig?.perAppProfiles,
-        [profile]: { ...(currentConfig?.perAppProfiles?.[profile] ?? {}), ...mixerProfile },
-      },
-    })
+    setPluginConfig({ perAppProfiles: { [profile]: mixerProfile } })
     await setMixerProfileInBackend(mixerProfile)
   }
 
@@ -202,12 +199,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
     masterDebounceRef.current = setTimeout(async () => {
       masterDebounceRef.current = null
       const mixerProfile: MixerProfile = { name: profile, volumes: updatedVolumes }
-      setPluginConfig({
-        perAppProfiles: {
-          ...currentConfig?.perAppProfiles,
-          [profile]: { ...(currentConfig?.perAppProfiles?.[profile] ?? {}), ...mixerProfile },
-        },
-      })
+      setPluginConfig({ perAppProfiles: { [profile]: mixerProfile } })
       await setMixerProfileInBackend(mixerProfile)
     }, 250)
   }
