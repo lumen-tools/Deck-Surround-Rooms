@@ -313,6 +313,7 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
           <PanelSectionRow>
             <ToggleField
               label="Per-game profile"
+              description={runningApp.display_name ? `For: ${runningApp.display_name}` : undefined}
               checked={usePerAppProfiles}
               onChange={(enabled) => togglePerAppProfiles(enabled)}
             />
@@ -326,7 +327,11 @@ const AudioControlsView: React.FC<AudioControlsViewProps> = ({ onChangePage }) =
             notchCount={4}
             notchTicksVisible={false}
             label="Master"
-            description={usePerAppProfiles ? 'Moves all channels. Only this game, not Steam.' : 'Moves all channels. All apps, not Steam.'}
+            description={
+              usePerAppProfiles && runningApp?.display_name
+                ? `Moves all channels. Only ${runningApp.display_name}, not Steam.`
+                : 'Moves all channels. All apps, not Steam.'
+            }
             showValue
             valueSuffix="%"
             resetValue={100}
